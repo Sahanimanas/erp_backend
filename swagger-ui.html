@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>School ERP API Documentation</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.18.3/swagger-ui.min.css">
+  <style>
+    html {
+      box-sizing: border-box;
+      overflow: -moz-scrollbars-vertical;
+      overflow-y: scroll;
+    }
+    *, *:before, *:after {
+      box-sizing: inherit;
+    }
+    body {
+      margin: 0;
+      padding: 0;
+      background: #fafafa;
+    }
+    .swagger-ui {
+      max-width: 100%;
+    }
+    .topbar {
+      background-color: #1e88e5;
+      padding: 10px 20px;
+      color: white;
+    }
+    .topbar h1 {
+      margin: 0;
+      font-size: 24px;
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>School ERP SaaS - API Documentation</h1>
+    <p>Complete API reference for the Enterprise School Management System</p>
+  </div>
+
+  <div id="swagger-ui"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.18.3/swagger-ui.min.js"></script>
+  <script>
+    window.onload = function() {
+      const ui = SwaggerUIBundle({
+        url: "./swagger.json",
+        dom_id: '#swagger-ui',
+        presets: [
+          SwaggerUIBundle.presets.apis,
+          SwaggerUIBundle.SwaggerUIStandalonePreset
+        ],
+        layout: "BaseLayout",
+        requestInterceptor: (request) => {
+          request.headers['X-API-Key'] = 'http://localhost:3000';
+          return request;
+        }
+      });
+      window.ui = ui;
+    };
+  </script>
+</body>
+</html>
