@@ -16,6 +16,19 @@ router.get('/', requireAuth, async (req, res) => {
   await studentController.listStudents(req, res);
 });
 
+// Bulk operations (declared before /:studentId so they aren't treated as an id)
+router.post('/promote', requireAuth, requireRole('SCHOOL_ADMIN', 'PRINCIPAL'), async (req, res) => {
+  await studentController.promoteStudents(req, res);
+});
+
+router.patch('/bulk', requireAuth, requireRole('SCHOOL_ADMIN', 'PRINCIPAL'), async (req, res) => {
+  await studentController.bulkUpdateStudents(req, res);
+});
+
+router.post('/import', requireAuth, requireRole('SCHOOL_ADMIN', 'PRINCIPAL'), async (req, res) => {
+  await studentController.importStudents(req, res);
+});
+
 router.get('/:studentId', requireAuth, async (req, res) => {
   await studentController.getStudentById(req, res);
 });

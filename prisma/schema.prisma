@@ -22,6 +22,7 @@ enum UserRole {
 }
 
 enum SubscriptionStatus {
+  TRIAL
   ACTIVE
   INACTIVE
   EXPIRED
@@ -58,6 +59,14 @@ enum ExamType {
   CLASS_TEST
 }
 
+enum AdmissionStatus {
+  ENQUIRY
+  CONTACTED
+  REGISTERED
+  ADMITTED
+  REJECTED
+}
+
 enum GradeType {
   A
   B
@@ -90,6 +99,9 @@ model School {
   schoolCode         String?                @unique
   registrationNumber String?                @unique
   isActive           Boolean                @default(true)
+  // Per-tenant feature/module control (toggled by the Super Admin). Empty = all
+  // modules enabled. Values mirror the keys in src/common/constants/modules.ts.
+  enabledModules     String[]               @default([])
   createdAt          DateTime               @default(now())
   updatedAt          DateTime               @updatedAt
   deletedAt          DateTime?
@@ -116,8 +128,14 @@ model SchoolDomain {
   id        String   @id @default(cuid())
   schoolId  String
   domain    String   @unique
+  // "subdomain" (school.myerp.com) or "custom" (school.edu). Drives DNS/SSL flow.
+  type      String   @default("subdomain")
   isPrimary Boolean  @default(false)
   isActive  Boolean  @default(true)
+  // DNS / SSL provisioning state for custom domains: PENDING | VERIFYING | ACTIVE | FAILED
+  dnsStatus String   @default("PENDING")
+  sslStatus String   @default("PENDING")
+  verifiedAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -473,6 +491,44 @@ model StudentDocument {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// ADMISSION (enquiry → registered → admitted funnel)
+// ─────────────────────────────────────────────────────────────────────────
+
+model AdmissionEnquiry {
+  id            String          @id @default(cuid())
+  schoolId      String
+  // Applicant
+  studentName   String
+  gender        String?
+  dateOfBirth   DateTime?
+  classApplying String?
+  // Guardian / contact
+  parentName    String?
+  phone         String
+  email         String?
+  address       String?
+  // Funnel
+  status        AdmissionStatus @default(ENQUIRY)
+  source        String?         // Walk-in | Online | Referral | Phone
+  reference     String?
+  registrationNo String?        @unique
+  followUpDate  DateTime?
+  notes         String?
+  assignedToId  String?
+  // Set when the enquiry is converted into a real Student (admission → student
+  // bridge). Links the two panels so an admitted applicant becomes a student.
+  admittedStudentId String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  deletedAt     DateTime?
+
+  @@index([schoolId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([phone])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // EMPLOYEE
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -613,6 +669,8 @@ model EmployeeAttendance {
   employeeId String
   date      DateTime
   status    AttendanceStatus @default(PRESENT)
+  inTime    String?
+  outTime   String?
   remarks   String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -750,6 +808,109 @@ model FeeCollection {
   @@index([feeId])
   @@index([status])
   @@index([paidDate])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// FEE MANAGEMENT (class fee types → per-class structure; transport routes)
+// ─────────────────────────────────────────────────────────────────────────
+
+model ClassFeeType {
+  id          String   @id @default(cuid())
+  schoolId    String
+  name        String
+  // Session | Monthly | One-time — how often the fee recurs.
+  frequency   String   @default("Monthly")
+  // Applicable months for Monthly frequency (e.g. ["Jun-2025", ...]).
+  months      String[] @default([])
+  incomeHead  String?
+  isTransport Boolean  @default(false)
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  structures ClassFeeStructure[]
+
+  @@unique([schoolId, name])
+  @@index([schoolId])
+  @@index([isTransport])
+}
+
+model ClassFeeStructure {
+  id        String   @id @default(cuid())
+  schoolId  String
+  classId   String
+  feeTypeId String
+  amount    BigInt   @default(0)
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  feeType ClassFeeType @relation(fields: [feeTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, feeTypeId])
+  @@index([schoolId])
+  @@index([classId])
+}
+
+model TransportRoute {
+  id        String   @id @default(cuid())
+  schoolId  String
+  name      String
+  fee       BigInt   @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  @@unique([schoolId, name])
+  @@index([schoolId])
+}
+
+// A single fee payment line against a ClassFeeType for a student. The "ledger"
+// (expected vs paid vs due) is computed by joining ClassFeeStructure (expected
+// amount for the student's class) against the sum of FeePayment rows.
+model FeePayment {
+  id         String   @id @default(cuid())
+  schoolId   String
+  studentId  String
+  feeTypeId  String?
+  feeTypeName String?            // denormalised label (survives fee-type rename/delete)
+  month      String?            // "Jun-2025" for monthly fees, null otherwise
+  amount     BigInt   @default(0)
+  discount   BigInt   @default(0)
+  fine       BigInt   @default(0)
+  paidDate   DateTime @default(now())
+  receiptNo  String?
+  mode       String   @default("CASH") // CASH | ONLINE | CHEQUE | BANK
+  // PAID | DISCOUNT (a pure discount line) | EXTRA (an extra charge line)
+  kind       String   @default("PAID")
+  note       String?
+  createdBy  String?
+  createdAt  DateTime @default(now())
+
+  @@index([schoolId])
+  @@index([studentId])
+  @@index([feeTypeId])
+  @@index([receiptNo])
+  @@index([paidDate])
+}
+
+model LateFeeRule {
+  id                  String   @id @default(cuid())
+  schoolId            String
+  name                String
+  session             String?
+  applicableFeeType   String?  // fee type the rule applies to (name)
+  lateFeeType         String?  // label of the late-fine fee
+  lateFeeAmount       BigInt   @default(0)
+  chargeAfterDueDays  Int      @default(0)
+  startFromCurrentMonth Boolean @default(true)
+  enabled             Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  deletedAt           DateTime?
+
+  @@index([schoolId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────

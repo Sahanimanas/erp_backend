@@ -101,6 +101,9 @@ import accountingRoutes from '@modules/accounting/routes';
 import examsRoutes from '@modules/exams/routes';
 import timetableRoutes from '@modules/timetable/routes';
 import notificationRoutes from '@modules/notifications/routes';
+import admissionRoutes from '@modules/admission/routes';
+import feeMgmtRoutes from '@modules/feemgmt/routes';
+import paymentsRoutes from '@modules/payments/routes';
 
 // Auth routes (public, no school context needed)
 app.use(`/api/${config.domain.apiVersion}/auth`, authRoutes);
@@ -118,6 +121,9 @@ app.use(`/api/${config.domain.apiVersion}/dashboard`, dashboardRoutes);
 app.use(`/api/${config.domain.apiVersion}/schools`, schoolRoutes);
 app.use(`/api/${config.domain.apiVersion}/admin`, adminRoutes);
 app.use(`/api/${config.domain.apiVersion}/academic`, academicRoutes);
+app.use(`/api/${config.domain.apiVersion}/admission`, admissionRoutes);
+app.use(`/api/${config.domain.apiVersion}/fee-management`, feeMgmtRoutes);
+app.use(`/api/${config.domain.apiVersion}/payments`, paymentsRoutes);
 app.use(`/api/${config.domain.apiVersion}/students`, studentRoutes);
 app.use(`/api/${config.domain.apiVersion}/sections`, sectionRoutes);
 app.use(`/api/${config.domain.apiVersion}/parents`, parentRoutes);

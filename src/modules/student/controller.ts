@@ -61,15 +61,46 @@ export class StudentController {
       const limit = parseInt(req.query.limit as string) || 10;
       const sectionId = req.query.sectionId as string | undefined;
       const search = req.query.search as string | undefined;
+      const classId = req.query.classId as string | undefined;
 
       if (!schoolId) {
         return void errorResponse(res, 400, 'School ID required');
       }
 
-      const result = await studentService.listStudents(schoolId, page, limit, sectionId, search);
+      const result = await studentService.listStudents(schoolId, page, limit, sectionId, search, classId);
       paginatedResponse(res, result.data, page, limit, result.pagination.total);
     } catch (error: any) {
       errorResponse(res, 400, error.message || 'Failed to list students');
+    }
+  }
+
+  async promoteStudents(req: Request, res: Response): Promise<void> {
+    try {
+      const schoolId = req.user!.schoolId;
+      const result = await studentService.promoteStudents(schoolId, req.body);
+      successResponse(res, 200, result, `Promoted ${result.promoted} student(s)`);
+    } catch (error: any) {
+      errorResponse(res, 400, error.message || 'Failed to promote students');
+    }
+  }
+
+  async bulkUpdateStudents(req: Request, res: Response): Promise<void> {
+    try {
+      const schoolId = req.user!.schoolId;
+      const result = await studentService.bulkUpdateStudents(schoolId, req.body.updates || req.body);
+      successResponse(res, 200, result, `Updated ${result.updated} student(s)`);
+    } catch (error: any) {
+      errorResponse(res, 400, error.message || 'Failed to update students');
+    }
+  }
+
+  async importStudents(req: Request, res: Response): Promise<void> {
+    try {
+      const schoolId = req.user!.schoolId;
+      const result = await studentService.importStudents(schoolId, req.body.students || req.body.rows || req.body);
+      successResponse(res, 200, result, `Imported ${result.imported} student(s)`);
+    } catch (error: any) {
+      errorResponse(res, 400, error.message || 'Failed to import students');
     }
   }
 

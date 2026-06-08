@@ -265,7 +265,7 @@ export class EmployeeService {
    */
   async listDepartments(schoolId: string) {
     const departments = await db.department.findMany({
-      where: { schoolId },
+      where: { schoolId, deletedAt: null },
       include: {
         employees: {
           select: {
@@ -311,11 +311,81 @@ export class EmployeeService {
    */
   async listDesignations(schoolId: string) {
     const designations = await db.designation.findMany({
-      where: { schoolId },
+      where: { schoolId, deletedAt: null },
       orderBy: { level: 'asc' },
     });
 
     return designations;
+  }
+
+  /** Update a designation (name / level / privileges). */
+  async updateDesignation(schoolId: string, id: string, data: any) {
+    const d = await db.designation.findFirst({ where: { id, schoolId } });
+    if (!d) throw new Error('Designation not found');
+    return db.designation.update({
+      where: { id },
+      data: {
+        name: data.name ?? d.name,
+        level: data.level ?? d.level,
+        description: data.description ?? d.description,
+        permissions: Array.isArray(data.permissions) ? data.permissions : d.permissions,
+      },
+    });
+  }
+
+  async deleteDesignation(schoolId: string, id: string) {
+    const d = await db.designation.findFirst({ where: { id, schoolId } });
+    if (!d) throw new Error('Designation not found');
+    await db.designation.update({ where: { id }, data: { deletedAt: new Date() } });
+    return { message: 'Designation deleted' };
+  }
+
+  async updateDepartment(schoolId: string, id: string, data: any) {
+    const d = await db.department.findFirst({ where: { id, schoolId } });
+    if (!d) throw new Error('Department not found');
+    return db.department.update({ where: { id }, data: { name: data.name ?? d.name, headId: data.headId ?? d.headId } });
+  }
+
+  async deleteDepartment(schoolId: string, id: string) {
+    const d = await db.department.findFirst({ where: { id, schoolId } });
+    if (!d) throw new Error('Department not found');
+    await db.department.update({ where: { id }, data: { deletedAt: new Date() } });
+    return { message: 'Department deleted' };
+  }
+
+  /**
+   * Import a batch of employees (Upload Employee). Each row mirrors the
+   * createEmployee payload; a default password is generated when none is given.
+   */
+  async importEmployees(schoolId: string, rows: any[]) {
+    if (!Array.isArray(rows) || rows.length === 0) throw new Error('No rows to import');
+    let imported = 0;
+    const errors: string[] = [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      try {
+        const [firstName, ...rest] = String(r.name || r.firstName || `Employee ${i + 1}`).trim().split(/\s+/);
+        await this.createEmployee(schoolId, {
+          firstName,
+          lastName: r.lastName || rest.join(' ') || firstName,
+          email: r.email || `${(r.employeeCode || `emp${Date.now()}${i}`).toString().toLowerCase()}@staff.local`,
+          password: r.password || 'Staff@123',
+          phone: r.phone,
+          role: r.role || 'TEACHER',
+          employeeCode: r.employeeCode,
+          gender: r.gender,
+          city: r.city,
+          qualification: r.qualification,
+          fatherName: r.fatherName,
+          bloodGroup: r.bloodGroup,
+          rfidNumber: r.rfidNumber,
+        } as any);
+        imported++;
+      } catch (e: any) {
+        errors.push(`Row ${i + 1} (${r.name || r.firstName || '?'}): ${e.message}`);
+      }
+    }
+    return { imported, failed: errors.length, errors };
   }
 
   /**

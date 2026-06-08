@@ -151,6 +151,33 @@ export class EmployeeController {
     }
   }
 
+  async updateDesignation(req: Request, res: Response): Promise<void> {
+    try {
+      const d = await employeeService.updateDesignation(req.user!.schoolId, req.params.id, req.body);
+      successResponse(res, 200, d, 'Designation updated');
+    } catch (e: any) { errorResponse(res, e.message.includes('not found') ? 404 : 400, e.message); }
+  }
+  async deleteDesignation(req: Request, res: Response): Promise<void> {
+    try { await employeeService.deleteDesignation(req.user!.schoolId, req.params.id); successResponse(res, 200, null, 'Designation deleted'); }
+    catch (e: any) { errorResponse(res, e.message.includes('not found') ? 404 : 400, e.message); }
+  }
+  async updateDepartment(req: Request, res: Response): Promise<void> {
+    try {
+      const d = await employeeService.updateDepartment(req.user!.schoolId, req.params.id, req.body);
+      successResponse(res, 200, d, 'Department updated');
+    } catch (e: any) { errorResponse(res, e.message.includes('not found') ? 404 : 400, e.message); }
+  }
+  async deleteDepartment(req: Request, res: Response): Promise<void> {
+    try { await employeeService.deleteDepartment(req.user!.schoolId, req.params.id); successResponse(res, 200, null, 'Department deleted'); }
+    catch (e: any) { errorResponse(res, e.message.includes('not found') ? 404 : 400, e.message); }
+  }
+  async importEmployees(req: Request, res: Response): Promise<void> {
+    try {
+      const result = await employeeService.importEmployees(req.user!.schoolId, req.body.employees || req.body.rows || req.body);
+      successResponse(res, 200, result, `Imported ${result.imported} employee(s)`);
+    } catch (e: any) { errorResponse(res, 400, e.message || 'Failed to import employees'); }
+  }
+
   async applyLeave(req: Request, res: Response): Promise<void> {
     try {
       const schoolId = req.user?.schoolId;

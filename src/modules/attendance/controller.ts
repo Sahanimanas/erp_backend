@@ -120,6 +120,80 @@ export class AttendanceController {
     }
   }
 
+  // ── Bulk marking ─────────────────────────────────────────────────────────
+  async markEmployeesBulk(req: Request, res: Response): Promise<void> {
+    try {
+      const schoolId = req.user?.schoolId;
+      const { date, records } = req.body;
+      if (!schoolId || !date || !Array.isArray(records)) {
+        return void errorResponse(res, 400, 'date and records[] are required');
+      }
+      const result = await attendanceService.markEmployeesBulk(schoolId, date, records);
+      successResponse(res, 200, result, `Saved ${result.saved} record(s)`);
+    } catch (error: any) {
+      errorResponse(res, 400, error.message || 'Failed to save attendance');
+    }
+  }
+
+  async markStudentsBulk(req: Request, res: Response): Promise<void> {
+    try {
+      const schoolId = req.user?.schoolId;
+      const { date, records } = req.body;
+      if (!schoolId || !date || !Array.isArray(records)) {
+        return void errorResponse(res, 400, 'date and records[] are required');
+      }
+      const result = await attendanceService.markStudentsBulk(schoolId, date, records);
+      successResponse(res, 200, result, `Saved ${result.saved} record(s)`);
+    } catch (error: any) {
+      errorResponse(res, 400, error.message || 'Failed to save attendance');
+    }
+  }
+
+  // ── Rosters with status for a date ─────────────────────────────────────────
+  async getEmployeesWithStatus(req: Request, res: Response): Promise<void> {
+    try {
+      const schoolId = req.user?.schoolId;
+      const date = (req.query.date as string) || new Date().toISOString();
+      if (!schoolId) return void errorResponse(res, 400, 'School context required');
+      const rows = await attendanceService.getEmployeesWithStatus(schoolId, date);
+      successResponse(res, 200, rows);
+    } catch (error: any) {
+      errorResponse(res, 400, error.message || 'Failed to load employees');
+    }
+  }
+
+  async getStudentsWithStatus(req: Request, res: Response): Promise<void> {
+    try {
+      const schoolId = req.user?.schoolId;
+      const date = (req.query.date as string) || new Date().toISOString();
+      const sectionId = req.query.sectionId as string | undefined;
+      if (!schoolId) return void errorResponse(res, 400, 'School context required');
+      const rows = await attendanceService.getStudentsWithStatus(schoolId, date, sectionId);
+      successResponse(res, 200, rows);
+    } catch (error: any) {
+      errorResponse(res, 400, error.message || 'Failed to load students');
+    }
+  }
+
+  async getEmployeeAttendanceRange(req: Request, res: Response): Promise<void> {
+    try {
+      const schoolId = req.user?.schoolId;
+      const { startDate, endDate, employeeId } = req.query;
+      if (!schoolId || !startDate || !endDate) {
+        return void errorResponse(res, 400, 'startDate and endDate are required');
+      }
+      const rows = await attendanceService.getEmployeeAttendanceRange(
+        schoolId,
+        startDate as string,
+        endDate as string,
+        (employeeId as string) || undefined
+      );
+      successResponse(res, 200, rows);
+    } catch (error: any) {
+      errorResponse(res, 400, error.message || 'Failed to load attendance');
+    }
+  }
+
   async getAttendanceStatistics(req: Request, res: Response): Promise<void> {
     try {
       const schoolId = req.user?.schoolId;

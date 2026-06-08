@@ -4,93 +4,60 @@ import { requireAuth, requireRole } from '@common/middleware/auth';
 
 const router = Router();
 
-/**
- * Super Admin Only Routes
- */
+// Every route in this module is Super Admin only. `requireRole` runs after the
+// global `authenticate` middleware (mounted in app.ts), and SUPER_ADMIN is the
+// only role allowed to operate across tenants.
+router.use(requireAuth, requireRole('SUPER_ADMIN'));
 
-// Schools
-router.post('/', requireAuth, requireRole('SUPER_ADMIN'), async (req, res) => {
-  await adminController.createSchool(req, res);
-});
+// ── Metadata ───────────────────────────────────────────────────────────────
+router.get('/modules', (req, res) => adminController.listModules(req, res));
 
-router.get('/', requireAuth, requireRole('SUPER_ADMIN'), async (req, res) => {
-  await adminController.listSchools(req, res);
-});
+// ── Analytics ────────────────────────────────────────────────────────────────
+router.get('/analytics', (req, res) => adminController.getDashboardAnalytics(req, res));
+router.get('/analytics/dashboard', (req, res) => adminController.getDashboardAnalytics(req, res));
 
-router.get('/:schoolId', requireAuth, requireRole('SUPER_ADMIN'), async (req, res) => {
-  await adminController.getSchoolById(req, res);
-});
+// ── Audit logs ───────────────────────────────────────────────────────────────
+router.get('/audit-logs', (req, res) => adminController.listAuditLogs(req, res));
 
-router.put('/:schoolId', requireAuth, requireRole('SUPER_ADMIN'), async (req, res) => {
-  await adminController.updateSchool(req, res);
-});
+// ── Subdomain availability (before /schools/:schoolId to avoid shadowing) ─────
+router.post('/schools/check-subdomain', (req, res) => adminController.checkSubdomain(req, res));
+router.get('/schools/check-subdomain', (req, res) => adminController.checkSubdomain(req, res));
 
-router.patch('/:schoolId/deactivate', requireAuth, requireRole('SUPER_ADMIN'), async (req, res) => {
-  await adminController.deactivateSchool(req, res);
-});
+// ── Subscription Plans ────────────────────────────────────────────────────────
+router.post('/plans', (req, res) => adminController.createSubscriptionPlan(req, res));
+router.get('/plans', (req, res) => adminController.listSubscriptionPlans(req, res));
+router.get('/plans/:planId', (req, res) => adminController.getSubscriptionPlanById(req, res));
+router.put('/plans/:planId', (req, res) => adminController.updateSubscriptionPlan(req, res));
 
-router.patch('/:schoolId/activate', requireAuth, requireRole('SUPER_ADMIN'), async (req, res) => {
-  await adminController.activateSchool(req, res);
-});
+// ── Subscriptions ─────────────────────────────────────────────────────────────
+router.post('/subscriptions', (req, res) => adminController.assignSubscription(req, res));
+router.get('/subscriptions/:schoolId', (req, res) => adminController.getSchoolSubscription(req, res));
 
-router.delete('/:schoolId', requireAuth, requireRole('SUPER_ADMIN'), async (req, res) => {
-  await adminController.deleteSchool(req, res);
-});
+// ── Domains (platform-wide + verify/remove) ──────────────────────────────────
+router.get('/domains', (req, res) => adminController.listAllDomains(req, res));
+router.post('/domains', (req, res) => adminController.createDomain(req, res));
+router.post('/domains/:domainId/verify', (req, res) => adminController.verifyDomain(req, res));
+router.delete('/domains/:domainId', (req, res) => adminController.deleteDomain(req, res));
 
-/**
- * Subscription Plans
- */
+// ── Schools (collection) ──────────────────────────────────────────────────────
+router.post('/schools', (req, res) => adminController.createSchool(req, res));
+router.get('/schools', (req, res) => adminController.listSchools(req, res));
 
-router.post('/plans', requireAuth, requireRole('SUPER_ADMIN'), async (req, res) => {
-  await adminController.createSubscriptionPlan(req, res);
-});
+// Backwards-compatible aliases (the original module mounted CRUD at the root).
+router.post('/', (req, res) => adminController.createSchool(req, res));
+router.get('/', (req, res) => adminController.listSchools(req, res));
 
-router.get('/plans', requireAuth, requireRole('SUPER_ADMIN'), async (req, res) => {
-  await adminController.listSubscriptionPlans(req, res);
-});
-
-router.get('/plans/:planId', requireAuth, requireRole('SUPER_ADMIN'), async (req, res) => {
-  await adminController.getSubscriptionPlanById(req, res);
-});
-
-router.put('/plans/:planId', requireAuth, requireRole('SUPER_ADMIN'), async (req, res) => {
-  await adminController.updateSubscriptionPlan(req, res);
-});
-
-/**
- * Subscriptions
- */
-
-router.post('/subscriptions', requireAuth, requireRole('SUPER_ADMIN'), async (req, res) => {
-  await adminController.assignSubscription(req, res);
-});
-
-router.get('/subscriptions/:schoolId', requireAuth, requireRole('SUPER_ADMIN'), async (req, res) => {
-  await adminController.getSchoolSubscription(req, res);
-});
-
-/**
- * Domains
- */
-
-router.post('/domains', requireAuth, requireRole('SUPER_ADMIN'), async (req, res) => {
-  await adminController.createDomain(req, res);
-});
-
-router.get('/:schoolId/domains', requireAuth, requireRole('SUPER_ADMIN'), async (req, res) => {
-  await adminController.listSchoolDomains(req, res);
-});
-
-router.delete('/domains/:domainId', requireAuth, requireRole('SUPER_ADMIN'), async (req, res) => {
-  await adminController.deleteDomain(req, res);
-});
-
-/**
- * Analytics
- */
-
-router.get('/analytics/dashboard', requireAuth, requireRole('SUPER_ADMIN'), async (req, res) => {
-  await adminController.getDashboardAnalytics(req, res);
-});
+// ── Schools (item) ────────────────────────────────────────────────────────────
+router.get('/schools/:schoolId', (req, res) => adminController.getSchoolById(req, res));
+router.put('/schools/:schoolId', (req, res) => adminController.updateSchool(req, res));
+router.patch('/schools/:schoolId', (req, res) => adminController.updateSchool(req, res));
+router.delete('/schools/:schoolId', (req, res) => adminController.deleteSchool(req, res));
+router.patch('/schools/:schoolId/activate', (req, res) => adminController.activateSchool(req, res));
+router.patch('/schools/:schoolId/suspend', (req, res) => adminController.deactivateSchool(req, res));
+router.patch('/schools/:schoolId/deactivate', (req, res) => adminController.deactivateSchool(req, res));
+router.patch('/schools/:schoolId/modules', (req, res) => adminController.updateSchoolModules(req, res));
+router.get('/schools/:schoolId/users', (req, res) => adminController.getSchoolUsers(req, res));
+router.get('/schools/:schoolId/domains', (req, res) => adminController.listSchoolDomains(req, res));
+router.post('/schools/:schoolId/login-as', (req, res) => adminController.loginAsSchoolAdmin(req, res));
 
 export default router;

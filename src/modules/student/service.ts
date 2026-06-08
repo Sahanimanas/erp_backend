@@ -97,7 +97,7 @@ export class StudentService {
         data: {
           schoolId,
           userId: user.id,
-          sectionId,
+          sectionId: section.id,
           rollNumber,
           dateOfBirth: dob,
           gender: data.gender,
@@ -228,20 +228,29 @@ export class StudentService {
   /**
    * List students
    */
-  async listStudents(schoolId: string, page: number = 1, limit: number = 10, sectionId?: string, search?: string) {
+  async listStudents(
+    schoolId: string,
+    page: number = 1,
+    limit: number = 10,
+    sectionId?: string,
+    search?: string,
+    classId?: string
+  ) {
     const skip = (page - 1) * limit;
-    const where: any = { schoolId };
+    const where: any = { schoolId, deletedAt: null };
 
-    if (sectionId) {
-      where.sectionId = sectionId;
-    }
+    if (sectionId) where.sectionId = sectionId;
+    // Filter by class via the section relation.
+    if (classId && !sectionId) where.section = { classId };
 
     if (search) {
       where.OR = [
         { user: { firstName: { contains: search, mode: 'insensitive' } } },
         { user: { lastName: { contains: search, mode: 'insensitive' } } },
         { user: { email: { contains: search, mode: 'insensitive' } } },
+        { user: { phone: { contains: search } } },
         { rollNumber: { contains: search, mode: 'insensitive' } },
+        { admissionNumber: { contains: search, mode: 'insensitive' } },
       ];
     }
 
@@ -252,22 +261,13 @@ export class StudentService {
         take: limit,
         include: {
           user: {
-            select: {
-              firstName: true,
-              lastName: true,
-              email: true,
-            },
+            select: { id: true, firstName: true, lastName: true, email: true, phone: true, isActive: true },
           },
           section: {
-            select: {
-              id: true,
-              name: true,
-              class: {
-                select: {
-                  name: true,
-                },
-              },
-            },
+            select: { id: true, name: true, class: { select: { id: true, name: true } } },
+          },
+          parents: {
+            select: { relationship: true, user: { select: { firstName: true, lastName: true, phone: true } } },
           },
         },
         orderBy: { rollNumber: 'asc' },
@@ -277,13 +277,128 @@ export class StudentService {
 
     return {
       data: students,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit),
-      },
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     };
+  }
+
+  /**
+   * Promote students to a target class. Each promoted student is moved to a
+   * section (same name if it exists in the target class, else the first section,
+   * else a freshly-created section "A"). Returns counts.
+   */
+  async promoteStudents(
+    schoolId: string,
+    data: { studentIds: string[]; toClassId: string; toSectionName?: string }
+  ) {
+    const { studentIds, toClassId, toSectionName } = data;
+    if (!Array.isArray(studentIds) || studentIds.length === 0) {
+      throw new Error('No students selected');
+    }
+    const toClass = await db.class.findFirst({ where: { id: toClassId, schoolId } });
+    if (!toClass) throw new Error('Target class not found');
+
+    let promoted = 0;
+    const errors: string[] = [];
+
+    for (const studentId of studentIds) {
+      try {
+        const student = await db.student.findFirst({ where: { id: studentId, schoolId }, include: { section: true } });
+        if (!student) { errors.push(`${studentId}: not found`); continue; }
+
+        const wantName = toSectionName || student.section?.name || 'A';
+        let section =
+          (await db.section.findFirst({ where: { classId: toClassId, name: wantName } })) ||
+          (await db.section.findFirst({ where: { classId: toClassId } }));
+        if (!section) {
+          section = await db.section.create({ data: { schoolId, classId: toClassId, name: wantName } });
+        }
+
+        await db.student.update({ where: { id: studentId }, data: { sectionId: section.id } });
+        promoted++;
+      } catch (e: any) {
+        errors.push(`${studentId}: ${e.message}`);
+      }
+    }
+    return { promoted, failed: errors.length, errors };
+  }
+
+  /**
+   * Bulk-update editable fields for many students at once (Student Bulk Update
+   * grid). Student-table fields go on the student; name/phone go on the user.
+   */
+  async bulkUpdateStudents(
+    schoolId: string,
+    updates: Array<{ studentId: string } & Record<string, any>>
+  ) {
+    if (!Array.isArray(updates) || updates.length === 0) throw new Error('No updates provided');
+
+    const STUDENT_FIELDS = ['rollNumber', 'gender', 'bloodGroup', 'caste', 'religion', 'motherTongue', 'aadharNumber', 'admissionNumber', 'photo'];
+    let updated = 0;
+    const errors: string[] = [];
+
+    for (const u of updates) {
+      try {
+        const student = await db.student.findFirst({ where: { id: u.studentId, schoolId } });
+        if (!student) { errors.push(`${u.studentId}: not found`); continue; }
+
+        const studentData: any = {};
+        for (const f of STUDENT_FIELDS) if (u[f] !== undefined) studentData[f] = u[f];
+        if (u.dateOfBirth) {
+          const d = new Date(u.dateOfBirth);
+          if (!isNaN(d.getTime())) studentData.dateOfBirth = d;
+        }
+
+        const userData: any = {};
+        if (u.firstName !== undefined) userData.firstName = u.firstName;
+        if (u.lastName !== undefined) userData.lastName = u.lastName;
+        if (u.phone !== undefined) userData.phone = u.phone;
+
+        await db.$transaction(async (tx) => {
+          if (Object.keys(studentData).length) await tx.student.update({ where: { id: u.studentId }, data: studentData });
+          if (Object.keys(userData).length) await tx.user.update({ where: { id: student.userId }, data: userData });
+        });
+        updated++;
+      } catch (e: any) {
+        errors.push(`${u.studentId}: ${e.message}`);
+      }
+    }
+    return { updated, failed: errors.length, errors };
+  }
+
+  /**
+   * Import a batch of students (Upload Student page). Each row mirrors the
+   * createStudent payload; a default password is generated when none is given.
+   */
+  async importStudents(schoolId: string, rows: any[]) {
+    if (!Array.isArray(rows) || rows.length === 0) throw new Error('No rows to import');
+
+    let imported = 0;
+    const errors: string[] = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      try {
+        await this.createStudent(schoolId, {
+          firstName: r.firstName,
+          lastName: r.lastName || '',
+          email: r.email || `${(r.rollNumber || `stu${Date.now()}${i}`).toString().toLowerCase()}@student.local`,
+          password: r.password || 'Student@123',
+          phone: r.phone,
+          dateOfBirth: r.dateOfBirth,
+          gender: r.gender || 'Male',
+          classId: r.classId,
+          sectionName: r.sectionName || 'A',
+          sectionId: r.sectionId,
+          rollNumber: r.rollNumber,
+          bloodGroup: r.bloodGroup,
+          admissionNumber: r.admissionNumber,
+        } as any);
+        imported++;
+      } catch (e: any) {
+        errors.push(`Row ${i + 1} (${r.firstName || '?'}): ${e.message}`);
+      }
+    }
+    return { imported, failed: errors.length, errors };
   }
 
   /**
