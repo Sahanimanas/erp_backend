@@ -139,7 +139,7 @@ export class DashboardService {
     }
 
     // Recent activities
-    const activities = [];
+    const activities: { icon: string; bg: string; title: string; detail: string; time: string }[] = [];
     // Get recent student admissions
     const recentStudents = await db.student.findMany({
       where: { schoolId },
