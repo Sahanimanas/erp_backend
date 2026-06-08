@@ -35,10 +35,15 @@ export const tenantMiddleware = async (
     const parts = host.split('.');
     let schoolSlug: string | null = null;
 
-    // Subdomain-based tenant identification
-    if (parts.length >= 3 && parts[0] !== 'api' && parts[0] !== 'www') {
-      // subdomain.schoolerp.com → subdomain is the school slug
-      schoolSlug = parts[0];
+    // Only extract a school slug when the host is a subdomain of the configured
+    // platform domain (e.g. demo.schoolerp.com). Bare API hosts like
+    // erp-backend-ixae.onrender.com or localhost must not be treated as school slugs.
+    const platformDomain = config.domain.platform; // e.g. 'schoolerp.com'
+    if (host.endsWith(`.${platformDomain}`) && parts.length > platformDomain.split('.').length) {
+      const slug = parts[0];
+      if (slug !== 'api' && slug !== 'www') {
+        schoolSlug = slug;
+      }
     }
 
     // If no subdomain, check if it's a custom domain
