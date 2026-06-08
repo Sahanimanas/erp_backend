@@ -26,9 +26,22 @@ const app = express();
 
 app.use(helmet());
 
+const allowedOrigins = [
+  config.frontendUrl,
+  'http://localhost:5173',
+  'http://localhost:5174',
+].filter(Boolean);
+
 app.use(
   cors({
-    origin: config.frontendUrl,
+    origin: (origin, callback) => {
+      // Allow requests with no origin (mobile apps, curl, Render health checks)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.some(o => origin === o || origin.endsWith('.vercel.app'))) {
+        return callback(null, true);
+      }
+      callback(new Error(`CORS: origin ${origin} not allowed`));
+    },
     credentials: true,
     optionsSuccessStatus: 200,
   })
