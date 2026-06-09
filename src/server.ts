@@ -21,9 +21,9 @@ const startServer = async () => {
 ╔════════════════════════════════════════════════╗
 ║   School ERP SaaS Backend Started              ║
 ╠════════════════════════════════════════════════╣
-║ Environment: ${config.node_env.padEnd(30)} ║
-║ Port: ${String(config.port).padEnd(39)} ║
-║ Database: Connected                           ║
+║ Environment: ${config.node_env.padEnd(30)}     ║
+║ Port: ${String(config.port).padEnd(39)}        ║
+║ Database: Connected                            ║
 ╚════════════════════════════════════════════════╝
       `);
     });

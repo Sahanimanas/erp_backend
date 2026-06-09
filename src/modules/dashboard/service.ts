@@ -1,7 +1,20 @@
 import { db } from '@common/database/client';
 
 export class DashboardService {
-  async getStats(schoolId: string) {
+  async getStats(schoolId: string, opts?: { startDate?: string; endDate?: string }) {
+    // Optional date-range filter. When provided, the time-based metrics (fee
+    // collection + attendance) are scoped to [rangeStart, rangeEnd]; otherwise
+    // they default to "current month" / "today" as before.
+    const hasRange = !!(opts?.startDate || opts?.endDate);
+    const _now = new Date();
+    const rangeStart = opts?.startDate
+      ? new Date(opts.startDate)
+      : new Date(_now.getFullYear(), _now.getMonth(), 1);
+    rangeStart.setHours(0, 0, 0, 0);
+    const rangeEnd = opts?.endDate
+      ? new Date(opts.endDate)
+      : new Date(_now.getFullYear(), _now.getMonth() + 1, 0);
+    rangeEnd.setHours(23, 59, 59, 999);
     // Fetch student count
     const studentCount = await db.student.count({
       where: { schoolId },
@@ -22,17 +35,13 @@ export class DashboardService {
       where: { schoolId },
     });
 
-    // Fee collection stats for current month
-    const currentDate = new Date();
-    const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
-    const lastDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
-
+    // Fee collection stats for the selected range (default: current month)
     const monthlyFeeCollections = await db.feeCollection.findMany({
       where: {
         schoolId,
         createdAt: {
-          gte: firstDayOfMonth,
-          lte: lastDayOfMonth,
+          gte: rangeStart,
+          lte: rangeEnd,
         },
       },
     });
@@ -54,19 +63,22 @@ export class DashboardService {
 
     const pendingAmount = pendingFees.reduce((sum, fc) => sum + Number(fc.amount), 0);
 
-    // Today's attendance
+    // Attendance summary — over the selected range when filtered, else today.
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const attStart = hasRange ? rangeStart : today;
+    const attEnd = hasRange ? rangeEnd : tomorrow;
 
     const todayAttendance = await db.studentAttendance.groupBy({
       by: ['status'],
       where: {
         schoolId,
         date: {
-          gte: today,
-          lt: tomorrow,
+          gte: attStart,
+          lt: attEnd,
         },
       },
       _count: true,

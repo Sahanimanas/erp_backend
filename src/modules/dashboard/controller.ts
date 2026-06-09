@@ -11,7 +11,10 @@ export class DashboardController {
         return void errorResponse(res, 400, 'School ID required');
       }
 
-      const stats = await dashboardService.getStats(schoolId);
+      const stats = await dashboardService.getStats(schoolId, {
+        startDate: req.query.startDate as string | undefined,
+        endDate: req.query.endDate as string | undefined,
+      });
       successResponse(res, 200, stats);
     } catch (error: any) {
       errorResponse(res, 400, error.message || 'Failed to fetch dashboard stats');
