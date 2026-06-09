@@ -1,0 +1,18 @@
+-- AlterTable
+ALTER TABLE "Student" ADD COLUMN     "apaarNo" TEXT,
+ADD COLUMN     "busNo" TEXT,
+ADD COLUMN     "educationHistory" JSONB,
+ADD COLUMN     "fatherOccupation" TEXT,
+ADD COLUMN     "fatherQualification" TEXT,
+ADD COLUMN     "feePlan" TEXT,
+ADD COLUMN     "guardianEmail" TEXT,
+ADD COLUMN     "height" TEXT,
+ADD COLUMN     "hostelName" TEXT,
+ADD COLUMN     "hostelRoomNo" TEXT,
+ADD COLUMN     "motherOccupation" TEXT,
+ADD COLUMN     "motherQualification" TEXT,
+ADD COLUMN     "pincode" TEXT,
+ADD COLUMN     "registrationNo" TEXT,
+ADD COLUMN     "remarks" TEXT,
+ADD COLUMN     "transportRoute" TEXT,
+ADD COLUMN     "weight" TEXT;

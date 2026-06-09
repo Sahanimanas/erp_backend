@@ -361,20 +361,70 @@ export class EmployeeService {
     if (!Array.isArray(rows) || rows.length === 0) throw new Error('No rows to import');
     let imported = 0;
     const errors: string[] = [];
+
+    // Resolve Department/Designation by NAME (find-or-create) and reporting-to by
+    // email, caching within this import run to avoid repeat lookups.
+    const deptCache = new Map<string, string>();
+    const desigCache = new Map<string, string>();
+
+    const resolveDept = async (name?: string) => {
+      const n = (name || '').trim();
+      if (!n) return undefined;
+      const key = n.toLowerCase();
+      if (deptCache.has(key)) return deptCache.get(key);
+      let d = await db.department.findFirst({ where: { schoolId, name: n } });
+      if (!d) d = await db.department.create({ data: { schoolId, name: n } });
+      deptCache.set(key, d.id);
+      return d.id;
+    };
+    const resolveDesig = async (name?: string) => {
+      const n = (name || '').trim();
+      if (!n) return undefined;
+      const key = n.toLowerCase();
+      if (desigCache.has(key)) return desigCache.get(key);
+      let d = await db.designation.findFirst({ where: { schoolId, name: n } });
+      if (!d) d = await db.designation.create({ data: { schoolId, name: n } });
+      desigCache.set(key, d.id);
+      return d.id;
+    };
+    const resolveReporting = async (email?: string) => {
+      const e = (email || '').trim();
+      if (!e) return undefined;
+      const emp = await db.employee.findFirst({
+        where: { schoolId, user: { email: { equals: e, mode: 'insensitive' } } },
+      });
+      return emp?.id;
+    };
+
     for (let i = 0; i < rows.length; i++) {
-      const r = rows[i];
+      // Normalise: trim strings, blank cells → undefined.
+      const raw = rows[i] || {};
+      const r: any = {};
+      for (const k of Object.keys(raw)) {
+        const v = typeof raw[k] === 'string' ? raw[k].trim() : raw[k];
+        r[k] = v === '' ? undefined : v;
+      }
       try {
         const [firstName, ...rest] = String(r.name || r.firstName || `Employee ${i + 1}`).trim().split(/\s+/);
+        const departmentId = await resolveDept(r.departmentName ?? r.department);
+        const designationId = await resolveDesig(r.designationName ?? r.designation);
+        const reportingToId = await resolveReporting(r.reportingToEmail ?? r.reportingTo);
         await this.createEmployee(schoolId, {
           firstName,
           lastName: r.lastName || rest.join(' ') || firstName,
-          email: r.email || `${(r.employeeCode || `emp${Date.now()}${i}`).toString().toLowerCase()}@staff.local`,
+          email: r.email || `${(r.employeeCode || r.userName || `emp${Date.now()}${i}`).toString().toLowerCase()}@staff.local`,
           password: r.password || 'Staff@123',
           phone: r.phone,
           role: r.role || 'TEACHER',
           employeeCode: r.employeeCode,
           gender: r.gender,
           city: r.city,
+          address: r.address,
+          permanentAddress: r.permanentAddress,
+          dateOfJoining: r.dateOfJoining,
+          departmentId,
+          designationId,
+          reportingToId,
           qualification: r.qualification,
           fatherName: r.fatherName,
           bloodGroup: r.bloodGroup,

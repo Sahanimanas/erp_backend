@@ -109,6 +109,21 @@ export const config = {
     publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
   },
 
+  // Cloudinary (image/asset hosting)
+  cloudinary: {
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME,
+    apiKey: process.env.CLOUDINARY_API_KEY,
+    apiSecret: process.env.CLOUDINARY_API_SECRET,
+    folder: process.env.CLOUDINARY_FOLDER || 'school-erp',
+    get configured() {
+      return Boolean(
+        process.env.CLOUDINARY_CLOUD_NAME &&
+        process.env.CLOUDINARY_API_KEY &&
+        process.env.CLOUDINARY_API_SECRET
+      );
+    },
+  },
+
   // Logging
   logging: {
     level: process.env.LOG_LEVEL || 'info',

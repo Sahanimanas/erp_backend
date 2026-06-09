@@ -435,13 +435,54 @@ model Student {
   dateOfBirth    DateTime
   gender         String
   bloodGroup     String?
+  category       String?
   caste          String?
   religion       String?
   motherTongue   String?
   aadharNumber   String?   @unique
+  penNumber      String?
+  apaarNo        String?
+  smartCardNo    String?
+  height         String?
+  weight         String?
+  remarks        String?
   photo          String?
   admissionDate  DateTime  @default(now())
   admissionNumber String?  @unique
+  registrationNo String?
+  feePlan        String?
+
+  // Prior education history: array of { courseName, passingYear, marksOrGrade, schoolName }
+  educationHistory Json?
+
+  // Parent / guardian particulars (kept on the student record for quick search
+  // & printing; a linked Parent login can still be created separately).
+  fatherName     String?
+  motherName     String?
+  fatherAadhar   String?
+  motherAadhar   String?
+  fatherOccupation String?
+  motherOccupation String?
+  fatherQualification String?
+  motherQualification String?
+  guardianName   String?
+  guardianPhone  String?
+  guardianEmail  String?
+
+  // Contact
+  address          String?
+  permanentAddress String?
+  city             String?
+  pincode          String?
+
+  // Facilities
+  hostelAllotted    Boolean @default(false)
+  hostelName        String?
+  hostelRoomNo      String?
+  transportAllotted Boolean @default(false)
+  transportRoute    String?
+  busNo             String?
+
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   deletedAt      DateTime?

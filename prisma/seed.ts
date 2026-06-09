@@ -659,8 +659,34 @@ async function main() {
           isActive: true, emailVerified: true, createdAt: created,
         },
       });
+
+      // Give each tenant a usable current academic session + classes/sections so
+      // impersonated logins land in a working school (Session/Class dropdowns,
+      // student upload, etc. all need an academic year to exist).
+      const dsYear = await prisma.academicYear.upsert({
+        where: { schoolId_name: { schoolId: ds.id, name: '2026-2027' } },
+        update: {},
+        create: {
+          schoolId: ds.id, name: '2026-2027',
+          startDate: new Date('2026-04-01'), endDate: new Date('2027-03-31'), isActive: true,
+        },
+      });
+      for (const cName of ['Nursery', 'LKG', 'UKG', '1', '2', '3', '4', '5']) {
+        const dsClass = await prisma.class.upsert({
+          where: { schoolId_name: { schoolId: ds.id, name: cName } },
+          update: {},
+          create: { schoolId: ds.id, name: cName, academicYearId: dsYear.id },
+        });
+        for (const sName of ['A', 'B']) {
+          await prisma.section.upsert({
+            where: { classId_name: { classId: dsClass.id, name: sName } },
+            update: {},
+            create: { schoolId: ds.id, classId: dsClass.id, name: sName },
+          });
+        }
+      }
     }
-    console.log(`✓ ${demoSchools.length} demo tenant schools created`);
+    console.log(`✓ ${demoSchools.length} demo tenant schools created (with academic year + classes)`);
 
     console.log('✓ Seeding completed successfully');
   } catch (error) {

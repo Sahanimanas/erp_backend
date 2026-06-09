@@ -1,0 +1,15 @@
+-- AlterTable
+ALTER TABLE "Student" ADD COLUMN     "address" TEXT,
+ADD COLUMN     "category" TEXT,
+ADD COLUMN     "city" TEXT,
+ADD COLUMN     "fatherAadhar" TEXT,
+ADD COLUMN     "fatherName" TEXT,
+ADD COLUMN     "guardianName" TEXT,
+ADD COLUMN     "guardianPhone" TEXT,
+ADD COLUMN     "hostelAllotted" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN     "motherAadhar" TEXT,
+ADD COLUMN     "motherName" TEXT,
+ADD COLUMN     "penNumber" TEXT,
+ADD COLUMN     "permanentAddress" TEXT,
+ADD COLUMN     "smartCardNo" TEXT,
+ADD COLUMN     "transportAllotted" BOOLEAN NOT NULL DEFAULT false;

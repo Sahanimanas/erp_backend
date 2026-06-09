@@ -117,6 +117,7 @@ import notificationRoutes from '@modules/notifications/routes';
 import admissionRoutes from '@modules/admission/routes';
 import feeMgmtRoutes from '@modules/feemgmt/routes';
 import paymentsRoutes from '@modules/payments/routes';
+import uploadRoutes from '@modules/upload/routes';
 
 // Auth routes (public, no school context needed)
 app.use(`/api/${config.domain.apiVersion}/auth`, authRoutes);
@@ -147,6 +148,7 @@ app.use(`/api/${config.domain.apiVersion}/accounting`, accountingRoutes);
 app.use(`/api/${config.domain.apiVersion}/exams`, examsRoutes);
 app.use(`/api/${config.domain.apiVersion}/timetable`, timetableRoutes);
 app.use(`/api/${config.domain.apiVersion}/notifications`, notificationRoutes);
+app.use(`/api/${config.domain.apiVersion}/uploads`, uploadRoutes);
 
 // ─────────────────────────────────────────────────────────────────────────
 // ERROR HANDLING

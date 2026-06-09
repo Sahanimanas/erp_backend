@@ -102,12 +102,45 @@ export class StudentService {
           dateOfBirth: dob,
           gender: data.gender,
           bloodGroup: data.bloodGroup,
+          category: data.category,
           caste: data.caste,
           religion: data.religion,
           motherTongue: data.motherTongue,
           aadharNumber: data.aadharNumber,
+          penNumber: data.penNumber,
+          apaarNo: data.apaarNo,
+          smartCardNo: data.smartCardNo,
+          height: data.height,
+          weight: data.weight,
+          remarks: data.remarks,
           admissionNumber: data.admissionNumber,
+          registrationNo: data.registrationNo,
+          feePlan: data.feePlan,
+          educationHistory: Array.isArray(data.educationHistory) && data.educationHistory.length
+            ? (data.educationHistory as any)
+            : undefined,
           photo: data.photo,
+          fatherName: data.fatherName,
+          motherName: data.motherName,
+          fatherAadhar: data.fatherAadhar,
+          motherAadhar: data.motherAadhar,
+          fatherOccupation: data.fatherOccupation,
+          motherOccupation: data.motherOccupation,
+          fatherQualification: data.fatherQualification,
+          motherQualification: data.motherQualification,
+          guardianName: data.guardianName,
+          guardianPhone: data.guardianPhone,
+          guardianEmail: data.guardianEmail,
+          address: data.address,
+          permanentAddress: data.permanentAddress,
+          city: data.city,
+          pincode: data.pincode,
+          hostelAllotted: data.hostelAllotted ?? false,
+          hostelName: data.hostelName,
+          hostelRoomNo: data.hostelRoomNo,
+          transportAllotted: data.transportAllotted ?? false,
+          transportRoute: data.transportRoute,
+          busNo: data.busNo,
         },
         include: {
           user: {
@@ -151,15 +184,22 @@ export class StudentService {
     }
 
     const updateData: any = { ...data };
-    if (data.firstName || data.lastName || data.email) {
+    // firstName/lastName/email/phone live on the related User, not Student —
+    // route them to a nested user update and strip them off the student payload.
+    if (data.firstName || data.lastName || data.email || data.phone) {
       updateData.user = {
         update: {
-          firstName: data.firstName,
-          lastName: data.lastName,
-          email: data.email,
+          ...(data.firstName !== undefined && { firstName: data.firstName }),
+          ...(data.lastName !== undefined && { lastName: data.lastName }),
+          ...(data.email !== undefined && { email: data.email }),
+          ...(data.phone !== undefined && { phone: data.phone }),
         },
       };
     }
+    delete updateData.firstName;
+    delete updateData.lastName;
+    delete updateData.email;
+    delete updateData.phone;
 
     const updated = await db.student.update({
       where: { id: studentId },
@@ -234,7 +274,9 @@ export class StudentService {
     limit: number = 10,
     sectionId?: string,
     search?: string,
-    classId?: string
+    classId?: string,
+    admissionFrom?: string,
+    admissionTo?: string
   ) {
     const skip = (page - 1) * limit;
     const where: any = { schoolId, deletedAt: null };
@@ -251,7 +293,21 @@ export class StudentService {
         { user: { phone: { contains: search } } },
         { rollNumber: { contains: search, mode: 'insensitive' } },
         { admissionNumber: { contains: search, mode: 'insensitive' } },
+        { registrationNo: { contains: search, mode: 'insensitive' } },
       ];
+    }
+
+    // Admission-date range filter (inclusive). Date-only strings are coerced.
+    if (admissionFrom || admissionTo) {
+      where.admissionDate = {};
+      if (admissionFrom) {
+        const f = new Date(admissionFrom);
+        if (!isNaN(f.getTime())) where.admissionDate.gte = f;
+      }
+      if (admissionTo) {
+        const t = new Date(admissionTo);
+        if (!isNaN(t.getTime())) { t.setHours(23, 59, 59, 999); where.admissionDate.lte = t; }
+      }
     }
 
     const [students, total] = await Promise.all([
@@ -264,7 +320,13 @@ export class StudentService {
             select: { id: true, firstName: true, lastName: true, email: true, phone: true, isActive: true },
           },
           section: {
-            select: { id: true, name: true, class: { select: { id: true, name: true } } },
+            select: {
+              id: true,
+              name: true,
+              class: {
+                select: { id: true, name: true, academicYear: { select: { name: true } } },
+              },
+            },
           },
           parents: {
             select: { relationship: true, user: { select: { firstName: true, lastName: true, phone: true } } },
@@ -332,7 +394,7 @@ export class StudentService {
   ) {
     if (!Array.isArray(updates) || updates.length === 0) throw new Error('No updates provided');
 
-    const STUDENT_FIELDS = ['rollNumber', 'gender', 'bloodGroup', 'caste', 'religion', 'motherTongue', 'aadharNumber', 'admissionNumber', 'photo'];
+    const STUDENT_FIELDS = ['rollNumber', 'gender', 'bloodGroup', 'category', 'caste', 'religion', 'motherTongue', 'aadharNumber', 'penNumber', 'apaarNo', 'smartCardNo', 'height', 'weight', 'remarks', 'admissionNumber', 'registrationNo', 'feePlan', 'educationHistory', 'photo', 'fatherName', 'motherName', 'fatherAadhar', 'motherAadhar', 'fatherOccupation', 'motherOccupation', 'fatherQualification', 'motherQualification', 'guardianName', 'guardianPhone', 'guardianEmail', 'address', 'permanentAddress', 'city', 'pincode', 'hostelAllotted', 'hostelName', 'hostelRoomNo', 'transportAllotted', 'transportRoute', 'busNo'];
     let updated = 0;
     const errors: string[] = [];
 
@@ -375,8 +437,19 @@ export class StudentService {
     let imported = 0;
     const errors: string[] = [];
 
+    // Excel/CSV cells arrive as strings; turn "yes"/"true"/"1"/"y" into booleans.
+    const toBool = (v: any) =>
+      typeof v === 'boolean' ? v : /^(yes|true|1|y)$/i.test(String(v ?? '').trim());
+
     for (let i = 0; i < rows.length; i++) {
-      const r = rows[i];
+      // Normalise: trim strings and turn blank cells into undefined so optional
+      // unique columns (aadharNumber, admissionNumber…) don't collide on "".
+      const raw = rows[i] || {};
+      const r: any = {};
+      for (const k of Object.keys(raw)) {
+        const v = typeof raw[k] === 'string' ? raw[k].trim() : raw[k];
+        r[k] = v === '' ? undefined : v;
+      }
       try {
         await this.createStudent(schoolId, {
           firstName: r.firstName,
@@ -387,11 +460,45 @@ export class StudentService {
           dateOfBirth: r.dateOfBirth,
           gender: r.gender || 'Male',
           classId: r.classId,
-          sectionName: r.sectionName || 'A',
+          sectionName: r.sectionName || r.section || 'A',
           sectionId: r.sectionId,
           rollNumber: r.rollNumber,
-          bloodGroup: r.bloodGroup,
           admissionNumber: r.admissionNumber,
+          registrationNo: r.registrationNo,
+          feePlan: r.feePlan,
+          bloodGroup: r.bloodGroup,
+          category: r.category,
+          caste: r.caste,
+          religion: r.religion,
+          motherTongue: r.motherTongue,
+          aadharNumber: r.aadharNumber,
+          penNumber: r.penNumber,
+          apaarNo: r.apaarNo,
+          smartCardNo: r.smartCardNo,
+          height: r.height,
+          weight: r.weight,
+          remarks: r.remarks,
+          fatherName: r.fatherName,
+          motherName: r.motherName,
+          fatherAadhar: r.fatherAadhar,
+          motherAadhar: r.motherAadhar,
+          fatherOccupation: r.fatherOccupation,
+          motherOccupation: r.motherOccupation,
+          fatherQualification: r.fatherQualification,
+          motherQualification: r.motherQualification,
+          guardianName: r.guardianName,
+          guardianPhone: r.guardianPhone,
+          guardianEmail: r.guardianEmail,
+          address: r.address,
+          permanentAddress: r.permanentAddress,
+          city: r.city,
+          pincode: r.pincode,
+          hostelAllotted: r.hostelAllotted !== undefined ? toBool(r.hostelAllotted) : undefined,
+          hostelName: r.hostelName,
+          hostelRoomNo: r.hostelRoomNo,
+          transportAllotted: r.transportAllotted !== undefined ? toBool(r.transportAllotted) : undefined,
+          transportRoute: r.transportRoute,
+          busNo: r.busNo,
         } as any);
         imported++;
       } catch (e: any) {

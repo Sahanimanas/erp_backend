@@ -1,3 +1,10 @@
+export interface StudentEducationRow {
+  courseName?: string;
+  passingYear?: string;
+  marksOrGrade?: string;
+  schoolName?: string;
+}
+
 export interface CreateStudentRequest {
   firstName: string;
   lastName: string;
@@ -13,28 +20,91 @@ export interface CreateStudentRequest {
   sectionName?: string;
   rollNumber: string;
   bloodGroup?: string;
+  category?: string;
   caste?: string;
   religion?: string;
   motherTongue?: string;
   aadharNumber?: string;
+  penNumber?: string;
+  apaarNo?: string;
+  smartCardNo?: string;
+  height?: string;
+  weight?: string;
+  remarks?: string;
   admissionNumber?: string;
+  registrationNo?: string;
+  feePlan?: string;
+  educationHistory?: StudentEducationRow[];
   photo?: string;
+  fatherName?: string;
+  motherName?: string;
+  fatherAadhar?: string;
+  motherAadhar?: string;
+  fatherOccupation?: string;
+  motherOccupation?: string;
+  fatherQualification?: string;
+  motherQualification?: string;
+  guardianName?: string;
+  guardianPhone?: string;
+  guardianEmail?: string;
+  address?: string;
+  permanentAddress?: string;
+  city?: string;
+  pincode?: string;
+  hostelAllotted?: boolean;
+  hostelName?: string;
+  hostelRoomNo?: string;
+  transportAllotted?: boolean;
+  transportRoute?: string;
+  busNo?: string;
 }
 
 export interface UpdateStudentRequest {
   firstName?: string;
   lastName?: string;
   email?: string;
+  phone?: string;
   dateOfBirth?: Date;
   gender?: string;
   sectionId?: string;
   rollNumber?: string;
   bloodGroup?: string;
+  category?: string;
   caste?: string;
   religion?: string;
   motherTongue?: string;
   aadharNumber?: string;
+  penNumber?: string;
+  apaarNo?: string;
+  smartCardNo?: string;
+  height?: string;
+  weight?: string;
+  remarks?: string;
+  registrationNo?: string;
+  feePlan?: string;
+  educationHistory?: StudentEducationRow[];
   photo?: string;
+  fatherName?: string;
+  motherName?: string;
+  fatherAadhar?: string;
+  motherAadhar?: string;
+  fatherOccupation?: string;
+  motherOccupation?: string;
+  fatherQualification?: string;
+  motherQualification?: string;
+  guardianName?: string;
+  guardianPhone?: string;
+  guardianEmail?: string;
+  address?: string;
+  permanentAddress?: string;
+  city?: string;
+  pincode?: string;
+  hostelAllotted?: boolean;
+  hostelName?: string;
+  hostelRoomNo?: string;
+  transportAllotted?: boolean;
+  transportRoute?: string;
+  busNo?: string;
 }
 
 export interface UploadStudentDocumentRequest {
