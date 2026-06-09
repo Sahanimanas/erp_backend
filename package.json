@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "ts-node -r tsconfig-paths/register src/server.ts",
     "build": "tsc && tsc-alias",
+    "vercel-build": "prisma generate && tsc && tsc-alias",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts",

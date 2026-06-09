@@ -1,0 +1,7 @@
+# Build fresh on Vercel — don't upload local artifacts
+dist
+node_modules
+.env
+.env.*
+tests
+*.log
