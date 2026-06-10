@@ -26,20 +26,29 @@ const app = express();
 
 app.use(helmet());
 
+// FRONTEND_URL may be a comma-separated list of allowed origins.
 const allowedOrigins = [
-  config.frontendUrl,
+  ...(config.frontendUrl || '').split(',').map((s) => s.trim()),
   'http://localhost:5173',
   'http://localhost:5174',
 ].filter(Boolean);
+
+// The platform root domain — every tenant subdomain (www, dps, …) is allowed.
+const ROOT_DOMAIN = config.domain.platform; // e.g. globalschoolmitra.com
 
 app.use(
   cors({
     origin: (origin, callback) => {
       // Allow requests with no origin (mobile apps, curl, Render health checks)
       if (!origin) return callback(null, true);
-      if (allowedOrigins.some(o => origin === o || origin.endsWith('.vercel.app'))) {
-        return callback(null, true);
-      }
+      let host = '';
+      try { host = new URL(origin).hostname; } catch { /* ignore */ }
+      const allowed =
+        allowedOrigins.some((o) => origin === o) ||
+        origin.endsWith('.vercel.app') ||
+        host === ROOT_DOMAIN ||
+        host.endsWith(`.${ROOT_DOMAIN}`); // www. / dps. / any tenant subdomain
+      if (allowed) return callback(null, true);
       callback(new Error(`CORS: origin ${origin} not allowed`));
     },
     credentials: true,

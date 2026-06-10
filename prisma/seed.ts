@@ -631,10 +631,10 @@ async function main() {
         },
       });
       await prisma.schoolDomain.upsert({
-        where: { domain: `${d.slug}.schoolerp.com` },
+        where: { domain: `${d.slug}.globalschoolmitra.com` },
         update: {},
         create: {
-          schoolId: ds.id, domain: `${d.slug}.schoolerp.com`, type: 'subdomain',
+          schoolId: ds.id, domain: `${d.slug}.globalschoolmitra.com`, type: 'subdomain',
           isPrimary: true, isActive: true, dnsStatus: 'ACTIVE', sslStatus: 'ACTIVE', verifiedAt: created,
         },
       });

@@ -80,7 +80,7 @@ export const config = {
 
   // Domain
   domain: {
-    platform: process.env.PLATFORM_DOMAIN || 'schoolerp.com',
+    platform: process.env.PLATFORM_DOMAIN || 'globalschoolmitra.com',
     apiVersion: process.env.API_VERSION || 'v1',
   },
 
