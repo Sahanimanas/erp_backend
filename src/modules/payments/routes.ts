@@ -21,8 +21,14 @@ router.post('/bulk-extra', requireAuth, requireRole(...COLLECTOR), (req, res) =>
 // Collect a payment
 router.post('/collect', requireAuth, requireRole(...COLLECTOR), (req, res) => paymentsController.collect(req, res));
 
-// Student ledger + history
+// Student ledger + history + installments
 router.get('/students/:studentId/ledger', requireAuth, (req, res) => paymentsController.ledger(req, res));
 router.get('/students/:studentId/history', requireAuth, (req, res) => paymentsController.history(req, res));
+router.get('/students/:studentId/installments', requireAuth, (req, res) => paymentsController.installments(req, res));
+
+// Per-installment adjustments (discount / extra) + delete + receipt revert
+router.post('/students/:studentId/adjust', requireAuth, requireRole(...COLLECTOR), (req, res) => paymentsController.adjust(req, res));
+router.post('/students/:studentId/delete-installment', requireAuth, requireRole(...COLLECTOR), (req, res) => paymentsController.deleteInstallment(req, res));
+router.post('/receipts/:receiptNo/revert', requireAuth, requireRole(...COLLECTOR), (req, res) => paymentsController.revert(req, res));
 
 export default router;

@@ -35,33 +35,56 @@ export class DashboardService {
       where: { schoolId },
     });
 
-    // Fee collection stats for the selected range (default: current month)
-    const monthlyFeeCollections = await db.feeCollection.findMany({
-      where: {
-        schoolId,
-        createdAt: {
-          gte: rangeStart,
-          lte: rangeEnd,
-        },
-      },
-    });
+    // ── Fees synced with the live workflow ──────────────────────────────────
+    // Demand = per-class fee structure × students (+ ad-hoc EXTRA − DISCOUNT) +
+    //          legacy fee-collection records. Collected = new FeePayment(PAID) +
+    //          legacy fee-collection(COMPLETED). Income/Expense pulls in office
+    //          accounting transactions. This keeps the dashboard in sync with
+    //          Fee Management, Student/Monthly Fee Payment and Accounting.
+    const N = (v: any) => Number(v ?? 0);
+    const [allStudents, structures, feePayments, oldFeeColls, transactions] = await Promise.all([
+      db.student.findMany({ where: { schoolId, deletedAt: null }, select: { section: { select: { classId: true } } } }),
+      db.classFeeStructure.findMany({ where: { schoolId, enabled: true }, include: { feeType: true } }),
+      db.feePayment.findMany({ where: { schoolId } }),
+      db.feeCollection.findMany({ where: { schoolId } }),
+      db.transaction.findMany({ where: { schoolId } }),
+    ]);
 
-    const totalFees = monthlyFeeCollections.reduce((sum, fc) => sum + Number(fc.amount), 0);
-    const collectedFees = monthlyFeeCollections
-      .filter((fc) => fc.status === 'COMPLETED')
-      .reduce((sum, fc) => sum + Number(fc.amount), 0);
+    const studentsPerClass: Record<string, number> = {};
+    for (const s of allStudents) {
+      const cid = s.section?.classId;
+      if (cid) studentsPerClass[cid] = (studentsPerClass[cid] || 0) + 1;
+    }
+    let structureDemand = 0;
+    for (const st of structures as any[]) {
+      const m = ['Monthly', 'Quarterly'].includes(st.feeType.frequency) ? Math.max(1, st.feeType.months.length) : 1;
+      structureDemand += N(st.amount) * m * (studentsPerClass[st.classId] || 0);
+    }
 
-    const feePercentage = totalFees > 0 ? Math.round((collectedFees / totalFees) * 100) : 0;
+    const sumPay = (k: string, field: 'amount' | 'discount' = 'amount') =>
+      feePayments.filter((p) => p.kind === k).reduce((s, p) => s + N((p as any)[field]), 0);
+    const paidNew = sumPay('PAID');
+    const extraNew = sumPay('EXTRA');
+    const discountNew = sumPay('DISCOUNT') + sumPay('PAID', 'discount');
+    const oldCompleted = oldFeeColls.filter((fc) => fc.status === 'COMPLETED').reduce((s, fc) => s + N(fc.amount), 0);
+    const oldTotal = oldFeeColls.reduce((s, fc) => s + N(fc.amount), 0);
 
-    // Pending fees
-    const pendingFees = await db.feeCollection.findMany({
-      where: {
-        schoolId,
-        status: 'PENDING',
-      },
-    });
+    const collectedAll = paidNew + oldCompleted;
+    const totalDemand = structureDemand + extraNew - discountNew + oldTotal;
+    const pendingAmount = Math.max(0, totalDemand - collectedAll);
 
-    const pendingAmount = pendingFees.reduce((sum, fc) => sum + Number(fc.amount), 0);
+    // Collected within the selected range (default current month).
+    const collectedFees =
+      feePayments.filter((p) => p.kind === 'PAID' && p.paidDate >= rangeStart && p.paidDate <= rangeEnd).reduce((s, p) => s + N(p.amount), 0) +
+      oldFeeColls.filter((fc) => fc.status === 'COMPLETED' && fc.createdAt >= rangeStart && fc.createdAt <= rangeEnd).reduce((s, fc) => s + N(fc.amount), 0);
+    const totalFees = totalDemand;
+    const feePercentage = totalFees > 0 ? Math.round((collectedAll / totalFees) * 100) : 0;
+
+    // Office accounting income/expense (fees collected count as income too).
+    const txnIncome = transactions.filter((t) => t.type === 'INCOME').reduce((s, t) => s + N(t.amount), 0);
+    const txnExpense = transactions.filter((t) => t.type === 'EXPENSE').reduce((s, t) => s + N(t.amount), 0);
+    const incomeTotal = collectedAll + txnIncome;
+    const expenseTotal = txnExpense;
 
     // Attendance summary — over the selected range when filtered, else today.
     const today = new Date();
@@ -127,26 +150,18 @@ export class DashboardService {
       const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
       const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0);
 
-      const fees = await db.feeCollection.findMany({
-        where: {
-          schoolId,
-          createdAt: {
-            gte: monthStart,
-            lte: monthEnd,
-          },
-        },
-      });
-
-      const monthTotal = fees.reduce((sum, fc) => sum + Number(fc.amount), 0);
-      const monthCollected = fees
-        .filter((fc) => fc.status === 'COMPLETED')
-        .reduce((sum, fc) => sum + Number(fc.amount), 0);
+      const monthEnd2 = new Date(monthEnd);
+      monthEnd2.setHours(23, 59, 59, 999);
+      const monthCollected =
+        feePayments.filter((p) => p.kind === 'PAID' && p.paidDate >= monthStart && p.paidDate <= monthEnd2).reduce((s, p) => s + N(p.amount), 0) +
+        oldFeeColls.filter((fc) => fc.status === 'COMPLETED' && fc.createdAt >= monthStart && fc.createdAt <= monthEnd2).reduce((s, fc) => s + N(fc.amount), 0);
+      const monthTotal = Math.round(totalDemand / 12); // even split of annual demand as a baseline
 
       monthlyFees.push({
         month: monthStart.toLocaleString('en-US', { month: 'short' }),
         total: monthTotal,
-        collected: monthCollected,
-        remaining: monthTotal - monthCollected,
+        collected: Math.round(monthCollected),
+        remaining: Math.max(0, monthTotal - Math.round(monthCollected)),
       });
     }
 
@@ -170,21 +185,23 @@ export class DashboardService {
       });
     });
 
-    // Get recent fee payments
-    const recentPayments = await db.feeCollection.findMany({
-      where: { schoolId, status: 'COMPLETED' },
-      include: { student: { include: { user: true } } },
-      orderBy: { createdAt: 'desc' },
-      take: 3,
-    });
-
-    recentPayments.forEach((payment) => {
+    // Recent fee payments — from the live FeePayment workflow.
+    const recentFeePayments = [...feePayments]
+      .filter((p) => p.kind === 'PAID')
+      .sort((a, b) => new Date(b.paidDate).getTime() - new Date(a.paidDate).getTime())
+      .slice(0, 3);
+    const recentSids = [...new Set(recentFeePayments.map((p) => p.studentId))];
+    const recentStuds = recentSids.length
+      ? await db.student.findMany({ where: { id: { in: recentSids } }, include: { user: true } })
+      : [];
+    const nameById = new Map(recentStuds.map((s) => [s.id, `${s.user?.firstName ?? ''} ${s.user?.lastName ?? ''}`.trim()]));
+    recentFeePayments.forEach((payment) => {
       activities.push({
         icon: '💰',
         bg: 'bg-emerald-50',
         title: 'Fee payment received',
-        detail: `₹${Number(payment.amount)} from ${payment.student?.user?.firstName}`,
-        time: this.timeAgo(payment.createdAt || new Date()),
+        detail: `₹${N(payment.amount)} from ${nameById.get(payment.studentId) || 'student'}`,
+        time: this.timeAgo(payment.paidDate || new Date()),
       });
     });
 
@@ -206,8 +223,8 @@ export class DashboardService {
       },
       monthlyFees,
       incomeExpense: {
-        income: Math.round(collectedFees),
-        expense: 0, // Would be calculated from actual expense data
+        income: Math.round(incomeTotal),
+        expense: Math.round(expenseTotal),
       },
       weeklyAttendance: weeklyData,
       activities: activities.slice(0, 5), // Return top 5

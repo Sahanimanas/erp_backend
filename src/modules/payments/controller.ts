@@ -26,6 +26,34 @@ export class PaymentsController {
     } catch (e: any) { errorResponse(res, codeFor(e), e.message); }
   }
 
+  async installments(req: Request, res: Response): Promise<void> {
+    try {
+      const data = await paymentsService.getInstallments(req.user!.schoolId, req.params.studentId);
+      successResponse(res, 200, data);
+    } catch (e: any) { errorResponse(res, codeFor(e), e.message); }
+  }
+
+  async adjust(req: Request, res: Response): Promise<void> {
+    try {
+      const data = await paymentsService.adjustInstallment(req.user!.schoolId, { ...req.body, studentId: req.params.studentId });
+      successResponse(res, 200, data, 'Adjustment applied');
+    } catch (e: any) { errorResponse(res, codeFor(e), e.message); }
+  }
+
+  async deleteInstallment(req: Request, res: Response): Promise<void> {
+    try {
+      const data = await paymentsService.deleteInstallmentPayments(req.user!.schoolId, { ...req.body, studentId: req.params.studentId });
+      successResponse(res, 200, data, 'Payment deleted');
+    } catch (e: any) { errorResponse(res, codeFor(e), e.message); }
+  }
+
+  async revert(req: Request, res: Response): Promise<void> {
+    try {
+      const data = await paymentsService.revertReceipt(req.user!.schoolId, req.params.receiptNo);
+      successResponse(res, 200, data, 'Receipt reverted');
+    } catch (e: any) { errorResponse(res, codeFor(e), e.message); }
+  }
+
   async exportClass(req: Request, res: Response): Promise<void> {
     try {
       const { classId } = req.query;

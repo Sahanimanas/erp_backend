@@ -7,7 +7,7 @@ export class PaymentsService {
   private async studentWithClass(schoolId: string, studentId: string) {
     const student = await db.student.findFirst({
       where: { id: studentId, schoolId },
-      include: { user: { select: { firstName: true, lastName: true, phone: true } }, section: { include: { class: true } } },
+      include: { user: { select: { firstName: true, lastName: true, phone: true, email: true } }, section: { include: { class: true } } },
     });
     if (!student) throw new Error('Student not found');
     return student;
@@ -33,7 +33,7 @@ export class PaymentsService {
       payments.filter((p) => p.feeTypeId === feeTypeId && p.kind === kind).reduce((s, p) => s + N(p.amount), 0);
 
     const items = structures.map((s) => {
-      const months = s.feeType.frequency === 'Monthly' ? Math.max(1, s.feeType.months.length) : 1;
+      const months = ['Monthly', 'Quarterly'].includes(s.feeType.frequency) ? Math.max(1, s.feeType.months.length) : 1;
       const base = N(s.amount) * months;
       const extra = sumBy(s.feeTypeId, 'EXTRA');
       const discount = sumBy(s.feeTypeId, 'DISCOUNT');
@@ -64,12 +64,143 @@ export class PaymentsService {
         name: `${student.user?.firstName ?? ''} ${student.user?.lastName ?? ''}`.trim(),
         rollNumber: student.rollNumber,
         phone: student.user?.phone,
+        email: student.user?.email,
         className: student.section?.class?.name,
         sectionName: student.section?.name,
+        fatherName: student.fatherName,
+        registrationNo: student.registrationNo,
+        photo: student.photo,
+        remarks: student.remarks,
       },
       items,
       totals,
     };
+  }
+
+  private static MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  private parseMonth(m?: string | null): Date | null {
+    if (!m) return null;
+    const [mon, yr] = m.split('-');
+    const idx = PaymentsService.MONTHS.indexOf(mon);
+    if (idx < 0 || !yr) return null;
+    return new Date(Number(yr), idx, 2);
+  }
+
+  /**
+   * Per-installment ledger: one row per fee type × applicable month (or "Only
+   * Once" for Session/One-time), each with total / paid / discount / due / status.
+   * Payments and adjustments are matched by (feeTypeId, month).
+   */
+  async getInstallments(schoolId: string, studentId: string) {
+    const student = await this.studentWithClass(schoolId, studentId);
+    const classId = student.section?.classId;
+    const [structures, payments] = await Promise.all([
+      classId
+        ? db.classFeeStructure.findMany({ where: { schoolId, classId, enabled: true }, include: { feeType: true } })
+        : Promise.resolve([]),
+      db.feePayment.findMany({ where: { schoolId, studentId } }),
+    ]);
+
+    const agg = (feeTypeId: string | null, month: string | null, kind: string, field: 'amount' | 'discount' = 'amount') =>
+      payments
+        .filter((p) => p.feeTypeId === feeTypeId && (p.month ?? null) === (month ?? null) && p.kind === kind)
+        .reduce((s, p) => s + N((p as any)[field]), 0);
+
+    const rows: any[] = [];
+    const seen = new Set<string>();
+    const pushRow = (feeTypeId: string | null, name: string, frequency: string, month: string | null, perMonth: number) => {
+      const key = `${feeTypeId}|${month ?? ''}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const paid = agg(feeTypeId, month, 'PAID');
+      const discount = agg(feeTypeId, month, 'DISCOUNT') + agg(feeTypeId, month, 'PAID', 'discount');
+      const extra = agg(feeTypeId, month, 'EXTRA');
+      const totalAmount = perMonth + extra;
+      const due = Math.max(0, totalAmount - discount - paid);
+      rows.push({
+        feeTypeId, name, frequency,
+        month, monthLabel: month || 'Only Once',
+        dueDate: this.parseMonth(month) || (student as any).admissionDate || new Date(),
+        previousDue: 0,
+        totalAmount, paid, discount, due,
+        status: due <= 0 && totalAmount > 0 ? 'Success' : 'Pending',
+      });
+    };
+
+    for (const s of structures as any[]) {
+      const ft = s.feeType;
+      const monthLike = ['Monthly', 'Quarterly'].includes(ft.frequency) && ft.months.length;
+      const keys = monthLike ? ft.months : [null];
+      for (const m of keys) pushRow(s.feeTypeId, ft.name, ft.frequency, m, N(s.amount));
+    }
+    // Extra/ad-hoc charges (e.g. Add Fee Payment) not tied to a structure row.
+    for (const p of payments.filter((x) => x.kind === 'EXTRA')) {
+      pushRow(p.feeTypeId, p.feeTypeName || 'Additional Fee', 'Other', p.month ?? null, 0);
+    }
+
+    rows.sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+    const totals = rows.reduce(
+      (t, r) => ({ total: t.total + r.totalAmount, paid: t.paid + r.paid, discount: t.discount + r.discount, due: t.due + r.due }),
+      { total: 0, paid: 0, discount: 0, due: 0 }
+    );
+
+    return {
+      student: {
+        id: student.id,
+        name: `${student.user?.firstName ?? ''} ${student.user?.lastName ?? ''}`.trim(),
+        rollNumber: student.rollNumber,
+        phone: student.user?.phone,
+        email: student.user?.email,
+        className: student.section?.class?.name,
+        sectionName: student.section?.name,
+        fatherName: (student as any).fatherName,
+        registrationNo: (student as any).registrationNo,
+        photo: (student as any).photo,
+        remarks: (student as any).remarks,
+      },
+      rows,
+      totals,
+    };
+  }
+
+  /** Apply a per-installment DISCOUNT or EXTRA charge (matched by feeTypeId + month). */
+  async adjustInstallment(
+    schoolId: string,
+    data: { studentId: string; feeTypeId?: string; month?: string; kind: 'DISCOUNT' | 'EXTRA'; amount: number; note?: string }
+  ) {
+    await this.studentWithClass(schoolId, data.studentId);
+    if (!data.feeTypeId) throw new Error('Fee type is required');
+    if (!(N(data.amount) > 0)) throw new Error('Amount must be greater than zero');
+    const feeType = await db.classFeeType.findFirst({ where: { id: data.feeTypeId, schoolId } });
+    await db.feePayment.create({
+      data: {
+        schoolId,
+        studentId: data.studentId,
+        feeTypeId: data.feeTypeId,
+        feeTypeName: feeType?.name || null,
+        month: data.month || null,
+        amount: BigInt(Math.round(N(data.amount))),
+        kind: data.kind,
+        note: data.note || null,
+      },
+    });
+    return { ok: true };
+  }
+
+  /** Delete the PAID rows of a single installment (revert that month's payment). */
+  async deleteInstallmentPayments(schoolId: string, data: { studentId: string; feeTypeId?: string; month?: string }) {
+    const res = await db.feePayment.deleteMany({
+      where: { schoolId, studentId: data.studentId, feeTypeId: data.feeTypeId || null, month: data.month || null, kind: 'PAID' },
+    });
+    return { deleted: res.count };
+  }
+
+  /** Revert an entire receipt (delete all payment rows sharing the receipt no). */
+  async revertReceipt(schoolId: string, receiptNo: string) {
+    if (!receiptNo) throw new Error('Receipt number is required');
+    const res = await db.feePayment.deleteMany({ where: { schoolId, receiptNo } });
+    if (res.count === 0) throw new Error('Receipt not found');
+    return { deleted: res.count };
   }
 
   /** Record a payment (one receipt with one or more fee lines). */
@@ -99,6 +230,7 @@ export class PaymentsService {
               mode: data.mode || 'CASH',
               kind: 'PAID',
               receiptNo,
+              note: l.note || (data as any).note || null,
               createdBy: data.createdBy || null,
             },
           })
@@ -122,8 +254,11 @@ export class PaymentsService {
     for (const s of students) {
       const ledger = await this.getStudentLedger(schoolId, s.id);
       rows.push({
+        studentId: s.id,
         rollNumber: s.rollNumber,
+        regId: s.registrationNo ?? '',
         name: ledger.student.name,
+        fatherName: s.fatherName ?? '',
         class: `${s.section?.class?.name ?? ''}-${s.section?.name ?? ''}`,
         phone: s.user?.phone ?? '',
         expected: ledger.totals.expected,
