@@ -86,10 +86,12 @@ export class AcademicController {
   async createClass(req: Request, res: Response): Promise<void> {
     try {
       const schoolId = req.user?.schoolId;
-      const { name, academicYearId } = req.body;
+      const { name } = req.body;
 
-      if (!schoolId || !name || !academicYearId) {
-        return void errorResponse(res, 400, 'School ID, class name, and academic year ID are required');
+      // academicYearId is optional — the service falls back to the school's
+      // latest academic year (creating a default one if none exists).
+      if (!schoolId || !name) {
+        return void errorResponse(res, 400, 'School ID and class name are required');
       }
 
       const cls = await academicService.createClass(schoolId, req.body);

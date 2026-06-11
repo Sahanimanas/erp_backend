@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { db } from '@common/database/client';
 import { hashPassword } from '@common/utils/crypto';
 import { CreateStudentRequest, UpdateStudentRequest, UploadStudentDocumentRequest } from './types';
@@ -69,7 +70,10 @@ export class StudentService {
       throw new Error('Roll number already exists in this section');
     }
 
-    const hashedPassword = await hashPassword(data.password);
+    // Bulk import pre-hashes the shared default password once and passes the
+    // hash through — detect the bcrypt prefix and skip re-hashing in that case.
+    const looksHashed = typeof data.password === 'string' && /^\$2[aby]\$/.test(data.password);
+    const hashedPassword = looksHashed ? data.password : await hashPassword(data.password);
 
     // Coerce date-only strings (e.g. "2012-04-01" from <input type="date">) into a
     // valid Date. Prisma rejects date-only strings for DateTime columns.
@@ -441,70 +445,211 @@ export class StudentService {
     const toBool = (v: any) =>
       typeof v === 'boolean' ? v : /^(yes|true|1|y)$/i.test(String(v ?? '').trim());
 
-    for (let i = 0; i < rows.length; i++) {
-      // Normalise: trim strings and turn blank cells into undefined so optional
-      // unique columns (aadharNumber, admissionNumber…) don't collide on "".
-      const raw = rows[i] || {};
+    // Find-or-create a class by name so sheets that carry their own "Class"
+    // column auto-create the class (no need to pick one on the page). New
+    // classes attach to the school's latest academic year (created if none).
+    const classCache = new Map<string, string>();
+    let cachedYearId: string | null = null;
+    const getYearId = async () => {
+      if (cachedYearId) return cachedYearId;
+      let year = await db.academicYear.findFirst({ where: { schoolId }, orderBy: { createdAt: 'desc' } });
+      if (!year) {
+        const y = new Date().getFullYear();
+        year = await db.academicYear.create({
+          data: { schoolId, name: `${y}-${y + 1}`, startDate: new Date(`${y}-04-01`), endDate: new Date(`${y + 1}-03-31`), isActive: true },
+        });
+      }
+      cachedYearId = year.id;
+      return cachedYearId;
+    };
+    const resolveClass = async (name?: string) => {
+      const n = (name || '').trim();
+      if (!n) return undefined;
+      const key = n.toLowerCase();
+      if (classCache.has(key)) return classCache.get(key);
+      let cls = await db.class.findFirst({ where: { schoolId, name: n, deletedAt: null } });
+      if (!cls) cls = await db.class.create({ data: { schoolId, name: n, academicYearId: await getYearId() } });
+      classCache.set(key, cls.id);
+      return cls.id;
+    };
+
+    // Find-or-create a section under a class, cached per (classId, name) so a
+    // sheet of 200 students in "Class 10 / A" resolves the section ONCE.
+    const sectionCache = new Map<string, string>();
+    const resolveSection = async (classId: string, name?: string) => {
+      const nm = (name || 'A').trim() || 'A';
+      const key = `${classId}|${nm.toLowerCase()}`;
+      if (sectionCache.has(key)) return sectionCache.get(key)!;
+      let sec = await db.section.findFirst({ where: { classId, name: nm } });
+      if (!sec) sec = await db.section.create({ data: { schoolId, classId, name: nm } });
+      sectionCache.set(key, sec.id);
+      return sec.id;
+    };
+
+    // Imported students share one default password — hash it ONCE (bcrypt is the
+    // single most expensive per-row op) and reuse for every row that doesn't
+    // carry its own. createStudent detects the bcrypt prefix and skips re-hashing.
+    const defaultPasswordHash = await hashPassword('Student@123');
+
+    // Normalise every row up front (trim, blank → undefined).
+    const norm = rows.map((raw: any) => {
       const r: any = {};
-      for (const k of Object.keys(raw)) {
+      for (const k of Object.keys(raw || {})) {
         const v = typeof raw[k] === 'string' ? raw[k].trim() : raw[k];
         r[k] = v === '' ? undefined : v;
       }
+      return r;
+    });
+
+    // Pre-resolve classes + sections SEQUENTIALLY (cache-backed, so only the
+    // unique ones hit the DB). Doing this before the concurrent insert pass
+    // avoids two rows racing to create the same new class/section.
+    for (const r of norm) {
       try {
-        await this.createStudent(schoolId, {
-          firstName: r.firstName,
-          lastName: r.lastName || '',
-          email: r.email || `${(r.rollNumber || `stu${Date.now()}${i}`).toString().toLowerCase()}@student.local`,
-          password: r.password || 'Student@123',
-          phone: r.phone,
-          dateOfBirth: r.dateOfBirth,
-          gender: r.gender || 'Male',
-          classId: r.classId,
-          sectionName: r.sectionName || r.section || 'A',
-          sectionId: r.sectionId,
-          rollNumber: r.rollNumber,
-          admissionNumber: r.admissionNumber,
-          registrationNo: r.registrationNo,
-          feePlan: r.feePlan,
-          bloodGroup: r.bloodGroup,
-          category: r.category,
-          caste: r.caste,
-          religion: r.religion,
-          motherTongue: r.motherTongue,
-          aadharNumber: r.aadharNumber,
-          penNumber: r.penNumber,
-          apaarNo: r.apaarNo,
-          smartCardNo: r.smartCardNo,
-          height: r.height,
-          weight: r.weight,
-          remarks: r.remarks,
-          fatherName: r.fatherName,
-          motherName: r.motherName,
-          fatherAadhar: r.fatherAadhar,
-          motherAadhar: r.motherAadhar,
-          fatherOccupation: r.fatherOccupation,
-          motherOccupation: r.motherOccupation,
-          fatherQualification: r.fatherQualification,
-          motherQualification: r.motherQualification,
-          guardianName: r.guardianName,
-          guardianPhone: r.guardianPhone,
-          guardianEmail: r.guardianEmail,
-          address: r.address,
-          permanentAddress: r.permanentAddress,
-          city: r.city,
-          pincode: r.pincode,
-          hostelAllotted: r.hostelAllotted !== undefined ? toBool(r.hostelAllotted) : undefined,
-          hostelName: r.hostelName,
-          hostelRoomNo: r.hostelRoomNo,
-          transportAllotted: r.transportAllotted !== undefined ? toBool(r.transportAllotted) : undefined,
-          transportRoute: r.transportRoute,
-          busNo: r.busNo,
-        } as any);
-        imported++;
-      } catch (e: any) {
-        errors.push(`Row ${i + 1} (${r.firstName || '?'}): ${e.message}`);
+        r._classId = r.classId || (await resolveClass(r.className || r.class || r.Class));
+        r._sectionId = r.sectionId || (r._classId ? await resolveSection(r._classId, r.sectionName || r.section) : undefined);
+      } catch {
+        /* resolution errors surface per-row in the insert pass below */
       }
     }
+
+    // ── Bulk insert path ─────────────────────────────────────────────────
+    // Build candidate user+student rows, validate uniqueness against the DB in
+    // two bulk queries (not per-row), then insert with createMany. This keeps a
+    // 1,000-student import to ~6 queries total instead of ~5,000.
+    const dob = (v: any) => {
+      const d = v ? new Date(v) : new Date('2010-01-01');
+      return isNaN(d.getTime()) ? new Date('2010-01-01') : d;
+    };
+
+    type Cand = { i: number; r: any; userId: string; email: string; rollNumber: string };
+    const cands: Cand[] = [];
+    const emailSeen = new Set<string>();   // de-dupe within the file
+    const rollSeen = new Set<string>();
+    const aadharSeen = new Set<string>();
+    const admSeen = new Set<string>();
+
+    norm.forEach((r: any, i: number) => {
+      if (!r.firstName) { errors.push(`Row ${i + 1}: firstName is required`); return; }
+      if (!r._classId || !r._sectionId) { errors.push(`Row ${i + 1} (${r.firstName}): class/section could not be resolved`); return; }
+
+      const email = String(r.email || `${(r.rollNumber || r.registrationNo || `stu${i}${Date.now()}`)}@student.local`).toLowerCase();
+      if (emailSeen.has(email)) { errors.push(`Row ${i + 1} (${r.firstName}): duplicate email in file (${email})`); return; }
+
+      const rollNumber = String(r.rollNumber || r.registrationNo || `AUTO-${Date.now()}-${i}`);
+      const rollKey = rollNumber.toLowerCase();
+      if (rollSeen.has(rollKey)) { errors.push(`Row ${i + 1} (${r.firstName}): duplicate roll number in file (${rollNumber})`); return; }
+
+      emailSeen.add(email);
+      rollSeen.add(rollKey);
+      cands.push({ i, r, userId: randomUUID(), email, rollNumber });
+    });
+
+    // Bulk-check what already exists in this school (two queries, not per-row).
+    const emails = cands.map((c) => c.email);
+    const rolls = cands.map((c) => c.rollNumber);
+    const [takenEmails, takenRolls] = await Promise.all([
+      emails.length ? db.user.findMany({ where: { schoolId, email: { in: emails } }, select: { email: true } }) : Promise.resolve([]),
+      rolls.length ? db.student.findMany({ where: { schoolId, rollNumber: { in: rolls } }, select: { rollNumber: true } }) : Promise.resolve([]),
+    ]);
+    const takenEmailSet = new Set(takenEmails.map((u) => u.email.toLowerCase()));
+    const takenRollSet = new Set(takenRolls.map((s) => s.rollNumber.toLowerCase()));
+
+    const userRows: any[] = [];
+    const studentRows: any[] = [];
+    for (const c of cands) {
+      const { r } = c;
+      if (takenEmailSet.has(c.email)) { errors.push(`Row ${c.i + 1} (${r.firstName}): email already exists (${c.email})`); continue; }
+      if (takenRollSet.has(c.rollNumber.toLowerCase())) { errors.push(`Row ${c.i + 1} (${r.firstName}): roll number already exists (${c.rollNumber})`); continue; }
+
+      // Null out blank / within-file-duplicate unique optional fields so they
+      // can't trip the aadhar / admissionNumber unique constraints.
+      const aadhar = r.aadharNumber && !aadharSeen.has(String(r.aadharNumber)) ? String(r.aadharNumber) : null;
+      if (aadhar) aadharSeen.add(aadhar);
+      const admNo = r.admissionNumber && !admSeen.has(String(r.admissionNumber)) ? String(r.admissionNumber) : null;
+      if (admNo) admSeen.add(admNo);
+
+      userRows.push({
+        id: c.userId,
+        schoolId,
+        firstName: r.firstName,
+        lastName: r.lastName || '',
+        email: c.email,
+        phone: r.phone || null,
+        password: r.password ? r.password : defaultPasswordHash,
+        role: 'STUDENT' as any,
+      });
+      studentRows.push({
+        schoolId,
+        userId: c.userId,
+        sectionId: r._sectionId,
+        rollNumber: c.rollNumber,
+        dateOfBirth: dob(r.dateOfBirth),
+        gender: r.gender || 'Male',
+        bloodGroup: r.bloodGroup || null,
+        category: r.category || null,
+        caste: r.caste || null,
+        religion: r.religion || null,
+        motherTongue: r.motherTongue || null,
+        aadharNumber: aadhar,
+        penNumber: r.penNumber || null,
+        apaarNo: r.apaarNo || null,
+        smartCardNo: r.smartCardNo || null,
+        height: r.height || null,
+        weight: r.weight || null,
+        remarks: r.remarks || null,
+        admissionNumber: admNo,
+        registrationNo: r.registrationNo || null,
+        feePlan: r.feePlan || null,
+        fatherName: r.fatherName || null,
+        motherName: r.motherName || null,
+        fatherAadhar: r.fatherAadhar || null,
+        motherAadhar: r.motherAadhar || null,
+        fatherOccupation: r.fatherOccupation || null,
+        motherOccupation: r.motherOccupation || null,
+        fatherQualification: r.fatherQualification || null,
+        motherQualification: r.motherQualification || null,
+        guardianName: r.guardianName || null,
+        guardianPhone: r.guardianPhone || null,
+        guardianEmail: r.guardianEmail || null,
+        address: r.address || null,
+        permanentAddress: r.permanentAddress || null,
+        city: r.city || null,
+        pincode: r.pincode || null,
+        hostelAllotted: r.hostelAllotted !== undefined ? toBool(r.hostelAllotted) : false,
+        hostelName: r.hostelName || null,
+        hostelRoomNo: r.hostelRoomNo || null,
+        transportAllotted: r.transportAllotted !== undefined ? toBool(r.transportAllotted) : false,
+        transportRoute: r.transportRoute || null,
+        busNo: r.busNo || null,
+      });
+    }
+
+    if (userRows.length) {
+      // Insert users then students. Chunk so a single statement never carries a
+      // huge parameter list. skipDuplicates is a safety net for any unique
+      // collision the bulk pre-checks didn't catch (e.g. aadhar already in DB).
+      const CHUNK = 500;
+      for (let s = 0; s < userRows.length; s += CHUNK) {
+        await db.user.createMany({ data: userRows.slice(s, s + CHUNK), skipDuplicates: true });
+      }
+      for (let s = 0; s < studentRows.length; s += CHUNK) {
+        await db.student.createMany({ data: studentRows.slice(s, s + CHUNK), skipDuplicates: true });
+      }
+
+      // Reconcile: a student row skipped by a late unique collision would leave
+      // its user orphaned — delete any of this batch's users that got no student.
+      const createdUserIds = userRows.map((u) => u.id);
+      const placed = await db.student.findMany({ where: { userId: { in: createdUserIds } }, select: { userId: true } });
+      const placedSet = new Set(placed.map((p) => p.userId));
+      imported = placedSet.size;
+      const orphans = createdUserIds.filter((id) => !placedSet.has(id));
+      if (orphans.length) {
+        await db.user.deleteMany({ where: { id: { in: orphans } } });
+        errors.push(`${orphans.length} row(s) skipped due to a duplicate aadhar / admission number already in the system`);
+      }
+    }
+
     return { imported, failed: errors.length, errors };
   }
 

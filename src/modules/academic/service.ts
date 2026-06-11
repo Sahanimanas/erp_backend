@@ -13,6 +13,33 @@ import {
 
 export class AcademicService {
   /**
+   * Find the school's most recent academic year, creating a default one
+   * (Apr–Mar of the current cycle) when the school has none yet. Used so a
+   * class can be created from just a name (the year is optional in the UI).
+   */
+  private async ensureAcademicYearId(schoolId: string, preferred?: string) {
+    if (preferred) return preferred;
+    let year = await db.academicYear.findFirst({
+      where: { schoolId },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!year) {
+      const now = new Date();
+      const y = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+      year = await db.academicYear.create({
+        data: {
+          schoolId,
+          name: `${y}-${y + 1}`,
+          startDate: new Date(`${y}-04-01`),
+          endDate: new Date(`${y + 1}-03-31`),
+          isActive: true,
+        },
+      });
+    }
+    return year.id;
+  }
+
+  /**
    * Create academic year
    */
   async createAcademicYear(schoolId: string, data: CreateAcademicYearRequest) {
@@ -101,23 +128,33 @@ export class AcademicService {
    * Create class
    */
   async createClass(schoolId: string, data: CreateClassRequest) {
-    const { name } = data;
+    const name = String(data.name || '').trim();
+    if (!name) throw new Error('Class name is required');
 
-    const existing = await db.class.findFirst({
-      where: {
-        schoolId,
-        name,
-      },
-    });
-
+    // The unique constraint is (schoolId, name) and includes soft-deleted rows.
+    // If a class with this name exists, restore it when it was deleted, else
+    // reject the duplicate.
+    const existing = await db.class.findFirst({ where: { schoolId, name } });
     if (existing) {
+      if (existing.deletedAt) {
+        return db.class.update({
+          where: { id: existing.id },
+          data: {
+            deletedAt: null,
+            description: data.description ?? existing.description,
+            classTeacherId: data.classTeacherId ?? existing.classTeacherId,
+            ...(data.academicYearId ? { academicYearId: data.academicYearId } : {}),
+          },
+        });
+      }
       throw new Error('Class with this name already exists');
     }
 
+    const academicYearId = await this.ensureAcademicYearId(schoolId, data.academicYearId);
     const cls = await db.class.create({
       data: {
         schoolId,
-        academicYearId: data.academicYearId,
+        academicYearId,
         name,
         description: data.description,
         classTeacherId: data.classTeacherId,
@@ -158,11 +195,12 @@ export class AcademicService {
 
     const [classes, total] = await Promise.all([
       db.class.findMany({
-        where: { schoolId },
+        where: { schoolId, deletedAt: null },
         skip,
         take: limit,
         include: {
           sections: {
+            where: { deletedAt: null },
             select: {
               id: true,
               name: true,
@@ -172,7 +210,7 @@ export class AcademicService {
         },
         orderBy: { name: 'asc' },
       }),
-      db.class.count({ where: { schoolId } }),
+      db.class.count({ where: { schoolId, deletedAt: null } }),
     ]);
 
     return {
@@ -254,7 +292,9 @@ export class AcademicService {
    * Create section
    */
   async createSection(schoolId: string, data: CreateSectionRequest) {
-    const { classId, name } = data;
+    const classId = data.classId;
+    const name = String(data.name || '').trim();
+    if (!name) throw new Error('Section name is required');
 
     const cls = await db.class.findFirst({
       where: {
@@ -267,14 +307,15 @@ export class AcademicService {
       throw new Error('Class not found');
     }
 
-    const existing = await db.section.findFirst({
-      where: {
-        classId,
-        name,
-      },
-    });
-
+    // Unique (classId, name) spans soft-deleted rows — restore on re-add.
+    const existing = await db.section.findFirst({ where: { classId, name } });
     if (existing) {
+      if (existing.deletedAt) {
+        return db.section.update({
+          where: { id: existing.id },
+          data: { deletedAt: null, strength: data.strength ?? existing.strength },
+        });
+      }
       throw new Error('Section with this name already exists in this class');
     }
 
@@ -317,7 +358,7 @@ export class AcademicService {
    * List sections
    */
   async listSections(schoolId: string, classId?: string) {
-    const where: any = { schoolId };
+    const where: any = { schoolId, deletedAt: null };
     if (classId) {
       where.classId = classId;
     }

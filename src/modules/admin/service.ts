@@ -677,6 +677,9 @@ export class AdminService {
       activeSubsWithPlan,
       recentSchools,
       subsByStatus,
+      schoolsTS,
+      subsTS,
+      allPlans,
     ] = await Promise.all([
       db.school.count({ where: { deletedAt: null } }),
       db.school.count({ where: { isActive: true, deletedAt: null } }),
@@ -702,6 +705,9 @@ export class AdminService {
         select: { id: true, name: true, slug: true, email: true, isActive: true, createdAt: true },
       }),
       db.subscription.groupBy({ by: ['status'], where: { deletedAt: null }, _count: true }),
+      db.school.findMany({ where: { deletedAt: null }, select: { createdAt: true } }),
+      db.subscription.findMany({ where: { deletedAt: null }, include: { plan: true } }),
+      db.subscriptionPlan.findMany({ select: { id: true, name: true } }),
     ]);
 
     // Monthly recognized revenue from currently-billing (ACTIVE) subscriptions.
@@ -711,15 +717,9 @@ export class AdminService {
       return sum + (s.plan.billingCycle === 'yearly' ? price / 12 : price);
     }, 0);
 
-    // Time-series for charts.
-    const schools = await db.school.findMany({
-      where: { deletedAt: null },
-      select: { createdAt: true },
-    });
-    const subs = await db.subscription.findMany({
-      where: { deletedAt: null },
-      include: { plan: true },
-    });
+    // Time-series for charts (data fetched in the batch above).
+    const schools = schoolsTS;
+    const subs = subsTS;
 
     const buckets = this.lastMonthBuckets(now, CHART_MONTHS);
     const schoolGrowth = buckets.map((b) => ({
@@ -736,7 +736,14 @@ export class AdminService {
       return { month: b.label, revenue: Math.round(revenue) };
     });
 
-    const subscriptionsByPlan = await this.subscriptionsByPlan();
+    // Subscriptions-by-plan computed from the already-fetched subs + plans.
+    const planNameById = new Map(allPlans.map((p) => [p.id, p.name]));
+    const planCounts = new Map<string, number>();
+    for (const s of subs) {
+      const name = (s as any).plan?.name || planNameById.get(s.planId) || 'Unknown';
+      planCounts.set(name, (planCounts.get(name) || 0) + 1);
+    }
+    const subscriptionsByPlan = [...planCounts.entries()].map(([plan, count]) => ({ plan, count }));
     const subscriptionsByStatus = subsByStatus.map((g: any) => ({
       status: g.status,
       count: typeof g._count === 'number' ? g._count : g._count?._all ?? 0,

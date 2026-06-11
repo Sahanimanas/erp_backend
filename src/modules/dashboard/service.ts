@@ -15,40 +15,53 @@ export class DashboardService {
       ? new Date(opts.endDate)
       : new Date(_now.getFullYear(), _now.getMonth() + 1, 0);
     rangeEnd.setHours(23, 59, 59, 999);
-    // Fetch student count
-    const studentCount = await db.student.count({
-      where: { schoolId },
-    });
+    // Attendance windows computed up-front so everything runs in ONE batch.
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+    const attStart = hasRange ? rangeStart : today;
+    const attEnd = hasRange ? rangeEnd : tomorrow;
+    const dayLabels = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const weekWindows: { day: string; gte: Date; lt: Date }[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(); d.setDate(d.getDate() - (6 - i)); d.setHours(0, 0, 0, 0);
+      const nd = new Date(d); nd.setDate(nd.getDate() + 1);
+      weekWindows.push({ day: dayLabels[d.getDay() === 0 ? 6 : d.getDay() - 1], gte: d, lt: nd });
+    }
 
-    // Fetch employee count
-    const employeeCount = await db.employee.count({
-      where: { schoolId },
-    });
-
-    // Fetch teacher count (employees with TEACHER role)
-    const teacherCount = await db.user.count({
-      where: { schoolId, role: 'TEACHER' },
-    });
-
-    // Fetch parent count
-    const parentCount = await db.parent.count({
-      where: { schoolId },
-    });
-
-    // ── Fees synced with the live workflow ──────────────────────────────────
-    // Demand = per-class fee structure × students (+ ad-hoc EXTRA − DISCOUNT) +
-    //          legacy fee-collection records. Collected = new FeePayment(PAID) +
-    //          legacy fee-collection(COMPLETED). Income/Expense pulls in office
-    //          accounting transactions. This keeps the dashboard in sync with
-    //          Fee Management, Student/Monthly Fee Payment and Accounting.
     const N = (v: any) => Number(v ?? 0);
-    const [allStudents, structures, feePayments, oldFeeColls, transactions] = await Promise.all([
+
+    // ── Single parallel batch ──────────────────────────────────────────────
+    // Counts, fee/accounting data (lightweight selects), attendance (today +
+    // 7 concurrent day buckets) and recents — all fired at once instead of
+    // ~15 sequential round-trips. Fees stay synced with the live workflow:
+    // demand = class fee structure × students (+EXTRA −DISCOUNT) + legacy
+    // collections; collected = FeePayment(PAID) + legacy COMPLETED.
+    // Weekly day-buckets fired concurrently (kept separate so the main batch
+    // stays a typed tuple).
+    const weekAttendancePromise = Promise.all(
+      weekWindows.map((w) =>
+        db.studentAttendance.groupBy({ by: ['status'], where: { schoolId, date: { gte: w.gte, lt: w.lt } }, _count: true })
+      )
+    );
+
+    const [
+      studentCount, employeeCount, teacherCount, parentCount,
+      allStudents, structures, feePayments, oldFeeColls, transactions,
+      todayAttendance, recentStudents,
+    ] = await Promise.all([
+      db.student.count({ where: { schoolId } }),
+      db.employee.count({ where: { schoolId } }),
+      db.user.count({ where: { schoolId, role: 'TEACHER' } }),
+      db.parent.count({ where: { schoolId } }),
       db.student.findMany({ where: { schoolId, deletedAt: null }, select: { section: { select: { classId: true } } } }),
       db.classFeeStructure.findMany({ where: { schoolId, enabled: true }, include: { feeType: true } }),
-      db.feePayment.findMany({ where: { schoolId } }),
-      db.feeCollection.findMany({ where: { schoolId } }),
-      db.transaction.findMany({ where: { schoolId } }),
+      db.feePayment.findMany({ where: { schoolId }, select: { amount: true, discount: true, kind: true, paidDate: true, studentId: true } }),
+      db.feeCollection.findMany({ where: { schoolId }, select: { amount: true, status: true, createdAt: true } }),
+      db.transaction.findMany({ where: { schoolId }, select: { type: true, amount: true } }),
+      db.studentAttendance.groupBy({ by: ['status'], where: { schoolId, date: { gte: attStart, lt: attEnd } }, _count: true }),
+      db.student.findMany({ where: { schoolId }, orderBy: { createdAt: 'desc' }, take: 3, select: { createdAt: true, user: { select: { firstName: true, lastName: true } } } }),
     ]);
+    const weekAttendance = await weekAttendancePromise;
 
     const studentsPerClass: Record<string, number> = {};
     for (const s of allStudents) {
@@ -86,61 +99,22 @@ export class DashboardService {
     const incomeTotal = collectedAll + txnIncome;
     const expenseTotal = txnExpense;
 
-    // Attendance summary — over the selected range when filtered, else today.
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-
-    const attStart = hasRange ? rangeStart : today;
-    const attEnd = hasRange ? rangeEnd : tomorrow;
-
-    const todayAttendance = await db.studentAttendance.groupBy({
-      by: ['status'],
-      where: {
-        schoolId,
-        date: {
-          gte: attStart,
-          lt: attEnd,
-        },
-      },
-      _count: true,
-    });
-
+    // Attendance summary (prefetched above).
     const presentCount = todayAttendance.find((a) => a.status === 'PRESENT')?._count || 0;
     const absentCount = todayAttendance.find((a) => a.status === 'ABSENT')?._count || 0;
     const attendancePercentage = presentCount + absentCount > 0
       ? Math.round((presentCount / (presentCount + absentCount)) * 100)
       : 0;
 
-    // Weekly attendance data
-    const weeklyData = [];
-    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-    for (let i = 0; i < 7; i++) {
-      const date = new Date();
-      date.setDate(date.getDate() - (6 - i));
-      date.setHours(0, 0, 0, 0);
-      const nextDate = new Date(date);
-      nextDate.setDate(nextDate.getDate() + 1);
-
-      const attendance = await db.studentAttendance.groupBy({
-        by: ['status'],
-        where: {
-          schoolId,
-          date: {
-            gte: date,
-            lt: nextDate,
-          },
-        },
-        _count: true,
-      });
-
-      weeklyData.push({
-        day: days[date.getDay() === 0 ? 6 : date.getDay() - 1],
-        present: attendance.find((a) => a.status === 'PRESENT')?._count || 0,
-        absent: attendance.find((a) => a.status === 'ABSENT')?._count || 0,
-      });
-    }
+    // Weekly attendance — buckets already fetched concurrently above.
+    const weeklyData = weekWindows.map((w, i) => {
+      const att = weekAttendance[i] || [];
+      return {
+        day: w.day,
+        present: att.find((a) => a.status === 'PRESENT')?._count || 0,
+        absent: att.find((a) => a.status === 'ABSENT')?._count || 0,
+      };
+    });
 
     // Monthly fee summary
     const monthlyFees = [];
@@ -165,16 +139,8 @@ export class DashboardService {
       });
     }
 
-    // Recent activities
+    // Recent activities (recentStudents prefetched above).
     const activities: { icon: string; bg: string; title: string; detail: string; time: string }[] = [];
-    // Get recent student admissions
-    const recentStudents = await db.student.findMany({
-      where: { schoolId },
-      include: { user: true },
-      orderBy: { createdAt: 'desc' },
-      take: 3,
-    });
-
     recentStudents.forEach((student) => {
       activities.push({
         icon: '📋',

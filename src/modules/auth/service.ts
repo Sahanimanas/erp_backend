@@ -33,6 +33,7 @@ export class AuthService {
         student: true,
         employee: true,
         parent: true,
+        school: { select: { id: true, name: true } },
       },
     });
 
@@ -119,6 +120,7 @@ export class AuthService {
         email: user.email,
         role: user.role,
         schoolId: user.schoolId,
+        schoolName: (user as any).school?.name,
       },
     };
   }

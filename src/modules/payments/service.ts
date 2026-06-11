@@ -14,21 +14,11 @@ export class PaymentsService {
   }
 
   /**
-   * The fee ledger for a student: every enabled fee type configured for their
-   * class with expected / extra / discount / paid / due. Expected for Monthly
-   * fees = per-month amount × number of applicable months.
+   * Pure ledger math (no DB): given a class's fee structures and ONE student's
+   * payments, produce the per-fee-type items + totals. Shared by the single
+   * student ledger and the batched class export so both stay consistent.
    */
-  async getStudentLedger(schoolId: string, studentId: string) {
-    const student = await this.studentWithClass(schoolId, studentId);
-    const classId = student.sectionId ? student.section?.classId : undefined;
-
-    const [structures, payments] = await Promise.all([
-      classId
-        ? db.classFeeStructure.findMany({ where: { schoolId, classId, enabled: true }, include: { feeType: true } })
-        : Promise.resolve([]),
-      db.feePayment.findMany({ where: { schoolId, studentId } }),
-    ]);
-
+  private computeLedger(structures: any[], payments: any[]) {
     const sumBy = (feeTypeId: string, kind: string) =>
       payments.filter((p) => p.feeTypeId === feeTypeId && p.kind === kind).reduce((s, p) => s + N(p.amount), 0);
 
@@ -57,6 +47,27 @@ export class PaymentsService {
       (t, i) => ({ expected: t.expected + i.expected, paid: t.paid + i.paid, due: t.due + i.due }),
       { expected: 0, paid: 0, due: 0 }
     );
+
+    return { items, totals };
+  }
+
+  /**
+   * The fee ledger for a student: every enabled fee type configured for their
+   * class with expected / extra / discount / paid / due. Expected for Monthly
+   * fees = per-month amount × number of applicable months.
+   */
+  async getStudentLedger(schoolId: string, studentId: string) {
+    const student = await this.studentWithClass(schoolId, studentId);
+    const classId = student.sectionId ? student.section?.classId : undefined;
+
+    const [structures, payments] = await Promise.all([
+      classId
+        ? db.classFeeStructure.findMany({ where: { schoolId, classId, enabled: true }, include: { feeType: true } })
+        : Promise.resolve([]),
+      db.feePayment.findMany({ where: { schoolId, studentId } }),
+    ]);
+
+    const { items, totals } = this.computeLedger(structures, payments);
 
     return {
       student: {
@@ -245,29 +256,51 @@ export class PaymentsService {
 
   /** Per-student fee export for a class: one row per student with totals. */
   async exportClassFees(schoolId: string, classId: string) {
-    const students = await db.student.findMany({
-      where: { schoolId, deletedAt: null, section: { classId } },
-      include: { user: { select: { firstName: true, lastName: true, phone: true } }, section: { include: { class: true } } },
-      orderBy: { rollNumber: 'asc' },
-    });
-    const rows = [];
-    for (const s of students) {
-      const ledger = await this.getStudentLedger(schoolId, s.id);
-      rows.push({
+    // Every student in this class shares ONE fee structure, so fetch it once;
+    // fetch ALL of their payments in a single query and group in memory. This
+    // turns a per-student N+1 (3 queries each) into 3 queries total.
+    const [students, structures] = await Promise.all([
+      db.student.findMany({
+        where: { schoolId, deletedAt: null, section: { classId } },
+        select: {
+          id: true, rollNumber: true, registrationNo: true, fatherName: true,
+          user: { select: { firstName: true, lastName: true, phone: true } },
+          section: { select: { name: true, class: { select: { name: true } } } },
+        },
+        orderBy: { rollNumber: 'asc' },
+      }),
+      db.classFeeStructure.findMany({ where: { schoolId, classId, enabled: true }, include: { feeType: true } }),
+    ]);
+
+    const studentIds = students.map((s) => s.id);
+    const allPayments = studentIds.length
+      ? await db.feePayment.findMany({ where: { schoolId, studentId: { in: studentIds } } })
+      : [];
+
+    // Bucket payments by student for O(1) lookup during the ledger computation.
+    const byStudent = new Map<string, any[]>();
+    for (const p of allPayments) {
+      const list = byStudent.get(p.studentId) || [];
+      list.push(p);
+      byStudent.set(p.studentId, list);
+    }
+
+    return students.map((s) => {
+      const { items, totals } = this.computeLedger(structures, byStudent.get(s.id) || []);
+      return {
         studentId: s.id,
         rollNumber: s.rollNumber,
         regId: s.registrationNo ?? '',
-        name: ledger.student.name,
+        name: `${s.user?.firstName ?? ''} ${s.user?.lastName ?? ''}`.trim(),
         fatherName: s.fatherName ?? '',
         class: `${s.section?.class?.name ?? ''}-${s.section?.name ?? ''}`,
         phone: s.user?.phone ?? '',
-        expected: ledger.totals.expected,
-        paid: ledger.totals.paid,
-        due: ledger.totals.due,
-        ...Object.fromEntries(ledger.items.map((i) => [i.name, i.due])),
-      });
-    }
-    return rows;
+        expected: totals.expected,
+        paid: totals.paid,
+        due: totals.due,
+        ...Object.fromEntries(items.map((i) => [i.name, i.due])),
+      };
+    });
   }
 
   // ── Bulk discount / extra (session-wide, class-wide, or specific students) ──

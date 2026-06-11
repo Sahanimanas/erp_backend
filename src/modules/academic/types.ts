@@ -15,7 +15,7 @@ export interface UpdateAcademicYearRequest {
 
 export interface CreateClassRequest {
   name: string;
-  academicYearId: string;
+  academicYearId?: string;
   description?: string;
   classTeacherId?: string;
 }

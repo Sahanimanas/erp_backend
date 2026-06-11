@@ -41,6 +41,7 @@ export interface AuthResponse {
     email: string;
     role: string;
     schoolId: string;
+    schoolName?: string;
   };
 }
 
