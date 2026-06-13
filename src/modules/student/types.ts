@@ -64,9 +64,15 @@ export interface UpdateStudentRequest {
   lastName?: string;
   email?: string;
   phone?: string;
+  password?: string;
+  enabled?: boolean;
   dateOfBirth?: Date;
   gender?: string;
   sectionId?: string;
+  classId?: string;
+  sectionName?: string;
+  admissionNumber?: string;
+  admissionDate?: Date;
   rollNumber?: string;
   bloodGroup?: string;
   category?: string;

@@ -167,6 +167,19 @@ export class StudentService {
   /**
    * Update student
    */
+  // Find-or-create a section under a class (mirrors the create flow) so the
+  // edit form — which sends classId + sectionName (A–Z) — can move a student
+  // between classes/sections without the caller knowing the section id.
+  private async resolveSectionId(schoolId: string, classId: string, sectionName: string) {
+    const cls = await db.class.findFirst({ where: { id: classId, schoolId } });
+    if (!cls) throw new Error('Class not found');
+    let section = await db.section.findFirst({ where: { classId: cls.id, name: sectionName } });
+    if (!section) {
+      section = await db.section.create({ data: { schoolId, classId: cls.id, name: sectionName } });
+    }
+    return section.id;
+  }
+
   async updateStudent(schoolId: string, studentId: string, data: UpdateStudentRequest) {
     const student = await db.student.findFirst({
       where: { id: studentId, schoolId },
@@ -176,34 +189,55 @@ export class StudentService {
       throw new Error('Student not found');
     }
 
-    // If changing section, verify new section exists
-    if (data.sectionId) {
-      const section = await db.section.findFirst({
-        where: { id: data.sectionId, schoolId },
-      });
-
-      if (!section) {
-        throw new Error('Section not found');
-      }
+    // Resolve the section: explicit sectionId wins, else classId + sectionName
+    // (find-or-create), otherwise the section is left unchanged.
+    let sectionId = data.sectionId;
+    if (!sectionId && data.classId && data.sectionName) {
+      sectionId = await this.resolveSectionId(schoolId, data.classId, data.sectionName);
+    }
+    if (sectionId) {
+      const section = await db.section.findFirst({ where: { id: sectionId, schoolId } });
+      if (!section) throw new Error('Section not found');
     }
 
-    const updateData: any = { ...data };
-    // firstName/lastName/email/phone live on the related User, not Student —
-    // route them to a nested user update and strip them off the student payload.
-    if (data.firstName || data.lastName || data.email || data.phone) {
-      updateData.user = {
-        update: {
-          ...(data.firstName !== undefined && { firstName: data.firstName }),
-          ...(data.lastName !== undefined && { lastName: data.lastName }),
-          ...(data.email !== undefined && { email: data.email }),
-          ...(data.phone !== undefined && { phone: data.phone }),
-        },
-      };
+    // Whitelist the columns that actually live on the Student row — never spread
+    // the raw body (it also carries name/classId/sectionName/password/etc.).
+    const STUDENT_COLS: (keyof UpdateStudentRequest)[] = [
+      'rollNumber', 'gender', 'bloodGroup', 'category', 'caste', 'religion', 'motherTongue',
+      'aadharNumber', 'penNumber', 'apaarNo', 'smartCardNo', 'height', 'weight', 'remarks',
+      'admissionNumber', 'registrationNo', 'feePlan', 'photo',
+      'fatherName', 'motherName', 'fatherAadhar', 'motherAadhar', 'fatherOccupation',
+      'motherOccupation', 'fatherQualification', 'motherQualification',
+      'guardianName', 'guardianPhone', 'guardianEmail',
+      'address', 'permanentAddress', 'city', 'pincode',
+      'hostelAllotted', 'hostelName', 'hostelRoomNo', 'transportAllotted', 'transportRoute', 'busNo',
+    ];
+    const updateData: any = {};
+    for (const k of STUDENT_COLS) {
+      if (data[k] !== undefined) updateData[k] = data[k];
     }
-    delete updateData.firstName;
-    delete updateData.lastName;
-    delete updateData.email;
-    delete updateData.phone;
+    if (sectionId) updateData.sectionId = sectionId;
+    if (data.dateOfBirth) {
+      const d = new Date(data.dateOfBirth);
+      if (!isNaN(d.getTime())) updateData.dateOfBirth = d;
+    }
+    if (data.admissionDate) {
+      const d = new Date(data.admissionDate);
+      if (!isNaN(d.getTime())) updateData.admissionDate = d;
+    }
+    if (Array.isArray(data.educationHistory)) {
+      updateData.educationHistory = data.educationHistory as any;
+    }
+
+    // firstName/lastName/email/phone/isActive/password live on the related User.
+    const userUpdate: any = {};
+    if (data.firstName !== undefined) userUpdate.firstName = data.firstName;
+    if (data.lastName !== undefined) userUpdate.lastName = data.lastName;
+    if (data.email !== undefined) userUpdate.email = data.email;
+    if (data.phone !== undefined) userUpdate.phone = data.phone;
+    if (data.enabled !== undefined) userUpdate.isActive = data.enabled;
+    if (data.password) userUpdate.password = await hashPassword(data.password);
+    if (Object.keys(userUpdate).length) updateData.user = { update: userUpdate };
 
     const updated = await db.student.update({
       where: { id: studentId },

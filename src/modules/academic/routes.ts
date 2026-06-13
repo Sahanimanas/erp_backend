@@ -24,6 +24,10 @@ router.put('/years/:yearId', requireAuth, requireRole('SCHOOL_ADMIN', 'PRINCIPAL
   await academicController.updateAcademicYear(req, res);
 });
 
+router.delete('/years/:yearId', requireAuth, requireRole('SCHOOL_ADMIN', 'PRINCIPAL'), async (req, res) => {
+  await academicController.deleteAcademicYear(req, res);
+});
+
 /**
  * Classes
  */

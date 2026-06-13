@@ -42,6 +42,23 @@ export class AcademicController {
     }
   }
 
+  async deleteAcademicYear(req: Request, res: Response): Promise<void> {
+    try {
+      const schoolId = req.user?.schoolId;
+      const { yearId } = req.params;
+
+      if (!schoolId || !yearId) {
+        return void errorResponse(res, 400, 'Required fields missing');
+      }
+
+      const result = await academicService.deleteAcademicYear(schoolId, yearId);
+      successResponse(res, 200, result, 'Academic year deleted successfully');
+    } catch (error: any) {
+      const statusCode = error.message.includes('not found') ? 404 : 400;
+      errorResponse(res, statusCode, error.message || 'Failed to delete academic year');
+    }
+  }
+
   /**
    * List academic years
    */

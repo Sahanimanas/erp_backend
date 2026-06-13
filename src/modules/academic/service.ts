@@ -92,6 +92,27 @@ export class AcademicService {
   }
 
   /**
+   * Delete an academic year / session. Hard delete (no soft-delete column) and
+   * blocked while classes are still attached to it, since classes FK-reference it.
+   */
+  async deleteAcademicYear(schoolId: string, yearId: string) {
+    const year = await db.academicYear.findFirst({
+      where: { id: yearId, schoolId },
+      include: { _count: { select: { classes: true } } },
+    });
+
+    if (!year) {
+      throw new Error('Academic year not found');
+    }
+    if (year._count.classes > 0) {
+      throw new Error('Cannot delete a session that still has classes assigned to it');
+    }
+
+    await db.academicYear.delete({ where: { id: yearId } });
+    return { message: 'Academic year deleted successfully' };
+  }
+
+  /**
    * List academic years
    */
   async listAcademicYears(schoolId: string) {
