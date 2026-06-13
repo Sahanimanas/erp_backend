@@ -33,7 +33,7 @@ export class AuthService {
         student: true,
         employee: true,
         parent: true,
-        school: { select: { id: true, name: true } },
+        school: { select: { id: true, name: true, logo: true } },
       },
     });
 
@@ -121,6 +121,7 @@ export class AuthService {
         role: user.role,
         schoolId: user.schoolId,
         schoolName: (user as any).school?.name,
+        schoolLogo: (user as any).school?.logo ?? null,
       },
     };
   }
@@ -298,6 +299,7 @@ export class AuthService {
         role: true,
         schoolId: true,
         isActive: true,
+        school: { select: { id: true, name: true, logo: true } },
         student: {
           select: {
             id: true,

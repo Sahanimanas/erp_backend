@@ -59,5 +59,6 @@ router.patch('/schools/:schoolId/modules', (req, res) => adminController.updateS
 router.get('/schools/:schoolId/users', (req, res) => adminController.getSchoolUsers(req, res));
 router.get('/schools/:schoolId/domains', (req, res) => adminController.listSchoolDomains(req, res));
 router.post('/schools/:schoolId/login-as', (req, res) => adminController.loginAsSchoolAdmin(req, res));
+router.post('/schools/:schoolId/reset-password', (req, res) => adminController.resetSchoolAdminPassword(req, res));
 
 export default router;

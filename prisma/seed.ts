@@ -3,44 +3,50 @@ import bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
 
+/**
+ * PRODUCTION SEED — reference / bootstrap data only.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * This seed creates ONLY the data a fresh production deployment needs to
+ * function. It is fully idempotent (every write is an upsert), so it is safe to
+ * re-run on an existing database.
+ *
+ * It creates:
+ *   • Roles (RBAC role catalog)
+ *   • Permissions (RBAC permission catalog)
+ *   • Subscription plan catalog (the plans schools subscribe to)
+ *   • The platform tenant + the SUPER_ADMIN account (credentials from env)
+ *
+ * It does NOT create any demo/sample data — real schools (with their academic
+ * years, classes, A–Z sections, students, staff, fees, etc.) are onboarded from
+ * the app: Super Admin → Create School, then Settings → Classes & Sections.
+ *
+ * Required environment variables:
+ *   SUPER_ADMIN_EMAIL      e.g. superadmin@globalschoolmitra.com
+ *   SUPER_ADMIN_PASSWORD   a strong password (hashed before storage)
+ */
 async function main() {
-  console.log('🌱 Seeding database...');
+  console.log('🌱 Seeding production reference data...');
 
-  // Generate proper bcrypt hash for password "test123" with salt 10
-  const salt = await bcrypt.genSalt(10);
-  const hashedPassword = await bcrypt.hash('test123', salt);
-  console.log('Generated password hash:', hashedPassword);
+  // Super admin credentials come from the environment so real secrets never
+  // live in source control. Fail loudly if they are not provided.
+  const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL;
+  const SUPER_ADMIN_PASSWORD = process.env.SUPER_ADMIN_PASSWORD;
+  if (!SUPER_ADMIN_EMAIL || !SUPER_ADMIN_PASSWORD) {
+    throw new Error(
+      'Refusing to seed: set SUPER_ADMIN_EMAIL and SUPER_ADMIN_PASSWORD environment variables first.'
+    );
+  }
+  const hashedPassword = await bcrypt.hash(SUPER_ADMIN_PASSWORD, await bcrypt.genSalt(10));
 
   // Define all roles
   const roles = [
-    {
-      name: 'SUPER_ADMIN' as UserRole,
-      description: 'Platform administrator with full access',
-    },
-    {
-      name: 'SCHOOL_ADMIN' as UserRole,
-      description: 'School administrator',
-    },
-    {
-      name: 'PRINCIPAL' as UserRole,
-      description: 'School principal',
-    },
-    {
-      name: 'TEACHER' as UserRole,
-      description: 'Teacher',
-    },
-    {
-      name: 'ACCOUNTANT' as UserRole,
-      description: 'Accountant',
-    },
-    {
-      name: 'STUDENT' as UserRole,
-      description: 'Student',
-    },
-    {
-      name: 'PARENT' as UserRole,
-      description: 'Parent/Guardian',
-    },
+    { name: 'SUPER_ADMIN' as UserRole, description: 'Platform administrator with full access' },
+    { name: 'SCHOOL_ADMIN' as UserRole, description: 'School administrator' },
+    { name: 'PRINCIPAL' as UserRole, description: 'School principal' },
+    { name: 'TEACHER' as UserRole, description: 'Teacher' },
+    { name: 'ACCOUNTANT' as UserRole, description: 'Accountant' },
+    { name: 'STUDENT' as UserRole, description: 'Student' },
+    { name: 'PARENT' as UserRole, description: 'Parent/Guardian' },
   ];
 
   // Define all permissions
@@ -120,21 +126,18 @@ async function main() {
   ];
 
   try {
-    // Create roles
+    // ── Roles ──
     console.log('Creating roles...');
     for (const role of roles) {
       await prisma.role.upsert({
         where: { name: role.name },
         update: {},
-        create: {
-          name: role.name,
-          description: role.description,
-        },
+        create: { name: role.name, description: role.description },
       });
     }
-    console.log('✓ Roles created');
+    console.log(`✓ ${roles.length} roles`);
 
-    // Create permissions
+    // ── Permissions ──
     console.log('Creating permissions...');
     for (const permission of permissions) {
       await prisma.permission.upsert({
@@ -147,421 +150,19 @@ async function main() {
         },
       });
     }
-    console.log('✓ Permissions created');
+    console.log(`✓ ${permissions.length} permissions`);
 
-    // Create test school
-    console.log('Creating test school...');
-    const school = await prisma.school.upsert({
-      where: { email: 'admin@school.com' },
-      update: {},
-      create: {
-        name: 'Demo School',
-        slug: 'demo-school',
-        email: 'admin@school.com',
-        phone: '9876543210',
-        address: '123 Education Street',
-        city: 'New York',
-        state: 'NY',
-        pincode: '10001',
-        country: 'USA',
-        principalName: 'John Doe',
-        principalEmail: 'principal@school.com',
-        isActive: true,
-      },
-    });
-    console.log('✓ School created');
-
-    // Create subscription plan
-    console.log('Creating subscription plan...');
-    const plan = await prisma.subscriptionPlan.upsert({
-      where: { name: 'Basic' },
-      update: {},
-      create: {
-        name: 'Basic',
-        description: 'Basic subscription plan',
-        price: 99.99,
-        maxUsers: 100,
-        maxStudents: 1000,
-        storageLimit: BigInt(10737418240), // 10GB
-      },
-    });
-    console.log('✓ Plan created');
-
-    // Create subscription
-    console.log('Creating subscription...');
-    await prisma.subscription.upsert({
-      where: { schoolId: school.id },
-      update: {},
-      create: {
-        schoolId: school.id,
-        planId: plan.id,
-        endDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year from now
-      },
-    });
-    console.log('✓ Subscription created');
-
-    // Create academic year
-    console.log('Creating academic year...');
-    const academicYear = await prisma.academicYear.upsert({
-      where: { schoolId_name: { schoolId: school.id, name: '2024-2025' } },
-      update: {},
-      create: {
-        schoolId: school.id,
-        name: '2024-2025',
-        startDate: new Date('2024-04-01'),
-        endDate: new Date('2025-03-31'),
-        isActive: true,
-      },
-    });
-    console.log('✓ Academic year created');
-
-    // Create classes
-    console.log('Creating classes...');
-    const classNames = ['Nursery', 'LKG', 'UKG', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
-    const classes = [];
-    for (const name of classNames) {
-      const cls = await prisma.class.upsert({
-        where: { schoolId_name: { schoolId: school.id, name } },
-        update: {},
-        create: {
-          schoolId: school.id,
-          name,
-          academicYearId: academicYear.id,
-        },
-      });
-      classes.push(cls);
-    }
-    console.log('✓ Classes created');
-
-    // Create sections
-    console.log('Creating sections...');
-    const sectionNames = ['A', 'B', 'C', 'D'];
-    for (const cls of classes) {
-      for (const sectionName of sectionNames) {
-        await prisma.section.upsert({
-          where: { classId_name: { classId: cls.id, name: sectionName } },
-          update: {},
-          create: {
-            schoolId: school.id,
-            classId: cls.id,
-            name: sectionName,
-          },
-        });
-      }
-    }
-    console.log('✓ Sections created');
-
-    // Create test admin user
-    console.log('Creating test admin user...');
-    await prisma.user.upsert({
-      where: { email_schoolId: { email: 'admin@school.com', schoolId: school.id } },
-      update: { password: hashedPassword },
-      create: {
-        schoolId: school.id,
-        email: 'admin@school.com',
-        firstName: 'Admin',
-        lastName: 'User',
-        password: hashedPassword,
-        role: 'SCHOOL_ADMIN',
-        isActive: true,
-        emailVerified: true,
-      },
-    });
-    console.log('✓ Admin user created');
-    console.log('✓ Login credentials: admin@school.com / test123');
-
-    // ── Fee Group + Fee Types (schema: FeeType requires groupId, amount is BigInt) ──
-    console.log('Creating fee group & types...');
-    const feeGroup = await prisma.feeGroup.upsert({
-      where: { schoolId_name: { schoolId: school.id, name: 'Term 1 Fees' } },
-      update: {},
-      create: {
-        schoolId: school.id,
-        name: 'Term 1 Fees',
-        description: 'First term consolidated fees',
-      },
-    });
-
-    const feeTypeData = [
-      { name: 'Tuition Fee', amount: BigInt(5000) },
-      { name: 'Transport Fee', amount: BigInt(1000) },
-      { name: 'Exam Fee', amount: BigInt(500) },
-    ];
-    for (const ft of feeTypeData) {
-      await prisma.feeType.upsert({
-        where: { schoolId_name: { schoolId: school.id, name: ft.name } },
-        update: {},
-        create: {
-          schoolId: school.id,
-          groupId: feeGroup.id,
-          name: ft.name,
-          amount: ft.amount,
-        },
-      });
-    }
-    const FEE_TOTAL = BigInt(6500); // sum of the three fee types
-    console.log('✓ Fee group & types created');
-
-    // ── Departments & Designations ──
-    console.log('Creating departments & designations...');
-    const department = await prisma.department.upsert({
-      where: { schoolId_name: { schoolId: school.id, name: 'Academics' } },
-      update: {},
-      create: { schoolId: school.id, name: 'Academics' },
-    });
-    const designation = await prisma.designation.upsert({
-      where: { schoolId_name: { schoolId: school.id, name: 'Senior Teacher' } },
-      update: {},
-      create: { schoolId: school.id, name: 'Senior Teacher', level: 2 },
-    });
-    console.log('✓ Departments & designations created');
-
-    // ── Sections & per-section Fee instances ──
-    const allSections = await prisma.section.findMany({
-      where: { schoolId: school.id },
-      include: { class: true },
-    });
-
-    const sectionFeeId = new Map<string, string>();
-    for (const section of allSections) {
-      let fee = await prisma.fee.findFirst({
-        where: { schoolId: school.id, sectionId: section.id, groupId: feeGroup.id },
-      });
-      if (!fee) {
-        fee = await prisma.fee.create({
-          data: {
-            schoolId: school.id,
-            sectionId: section.id,
-            groupId: feeGroup.id,
-            dueDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000),
-            fine: BigInt(50),
-          },
-        });
-      }
-      sectionFeeId.set(section.id, fee.id);
-    }
-
-    // ── Sample students (3 per section) with fee collection, parent, attendance ──
-    console.log('Creating sample students...');
-    const firstNames = ['Jaysal', 'Ragani', 'Anmol', 'Aryan', 'Sherya', 'Krity', 'Anish', 'Priya', 'Rahul', 'Sneha', 'Vikas', 'Neha'];
-    const lastNames = ['Kumari', 'Sharma', 'Kumar', 'Singh', 'Verma', 'Gupta', 'Patel', 'Nair', 'Desai', 'Chopra'];
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    let studentCounter = 0;
-    for (const section of allSections) {
-      for (let i = 0; i < 3; i++) {
-        const first = firstNames[(studentCounter + i) % firstNames.length];
-        const last = lastNames[(studentCounter + i * 3) % lastNames.length];
-        const studentEmail = `${first.toLowerCase()}.${last.toLowerCase()}${studentCounter}@student.com`;
-        const roll = `${section.class?.name}${section.name}${String(i + 1).padStart(2, '0')}`;
-
-        const studentUser = await prisma.user.upsert({
-          where: { email_schoolId: { email: studentEmail, schoolId: school.id } },
-          update: {},
-          create: {
-            schoolId: school.id,
-            firstName: first,
-            lastName: last,
-            email: studentEmail,
-            phone: `98${String(7000000 + studentCounter).padStart(8, '0')}`,
-            password: hashedPassword,
-            role: 'STUDENT',
-            isActive: true,
-            emailVerified: true,
-          },
-        });
-
-        const student = await prisma.student.upsert({
-          where: { userId: studentUser.id },
-          update: {},
-          create: {
-            schoolId: school.id,
-            userId: studentUser.id,
-            sectionId: section.id,
-            rollNumber: roll,
-            admissionNumber: `ADM${String(studentCounter + 1).padStart(4, '0')}`,
-            dateOfBirth: new Date(2008 + (studentCounter % 6), (studentCounter % 12), ((studentCounter % 27) + 1)),
-            gender: studentCounter % 2 === 0 ? 'MALE' : 'FEMALE',
-            bloodGroup: ['O+', 'A+', 'B+', 'AB+', 'O-', 'A-', 'B-', 'AB-'][studentCounter % 8],
-          },
-        });
-
-        // Fee collection (status enum: COMPLETED / PENDING — NOT 'PAID')
-        const feeId = sectionFeeId.get(section.id)!;
-        const existingFC = await prisma.feeCollection.findFirst({
-          where: { studentId: student.id, feeId },
-        });
-        if (!existingFC) {
-          const isPaid = studentCounter % 3 !== 0; // ~2/3 paid
-          await prisma.feeCollection.create({
-            data: {
-              schoolId: school.id,
-              studentId: student.id,
-              feeId,
-              amount: FEE_TOTAL,
-              paidDate: new Date(),
-              status: isPaid ? 'COMPLETED' : 'PENDING',
-              receiptNo: isPaid ? `RCP-${student.id.slice(-8)}` : null,
-            },
-          });
-        }
-
-        // Parent for the first 2 students of each section
-        if (i < 2) {
-          const parentEmail = `parent.${roll.toLowerCase()}@parent.com`;
-          const parentUser = await prisma.user.upsert({
-            where: { email_schoolId: { email: parentEmail, schoolId: school.id } },
-            update: {},
-            create: {
-              schoolId: school.id,
-              firstName: `${first}'s`,
-              lastName: 'Parent',
-              email: parentEmail,
-              phone: `97${String(6000000 + studentCounter).padStart(8, '0')}`,
-              password: hashedPassword,
-              role: 'PARENT',
-              isActive: true,
-              emailVerified: true,
-            },
-          });
-          await prisma.parent.upsert({
-            where: { userId: parentUser.id },
-            update: {},
-            create: {
-              schoolId: school.id,
-              userId: parentUser.id,
-              relationship: studentCounter % 2 === 0 ? 'Father' : 'Mother',
-              occupation: 'Business',
-              students: { connect: { id: student.id } },
-            },
-          });
-        }
-
-        // Today's attendance (unique on schoolId+studentId+date)
-        const existingAtt = await prisma.studentAttendance.findFirst({
-          where: { studentId: student.id, date: today },
-        });
-        if (!existingAtt) {
-          await prisma.studentAttendance.create({
-            data: {
-              schoolId: school.id,
-              studentId: student.id,
-              date: today,
-              status: studentCounter % 5 === 0 ? 'ABSENT' : 'PRESENT',
-            },
-          });
-        }
-
-        studentCounter++;
-      }
-    }
-    console.log(`✓ ${studentCounter} students created with fees, parents & attendance`);
-
-    // ── Employees (3 teachers) ──
-    console.log('Creating employees...');
-    const employeeData = [
-      { first: 'Ramesh', last: 'Iyer' },
-      { first: 'Sunita', last: 'Rao' },
-      { first: 'Vijay', last: 'Menon' },
-    ];
-    for (let i = 0; i < employeeData.length; i++) {
-      const { first, last } = employeeData[i];
-      const empEmail = `${first.toLowerCase()}.${last.toLowerCase()}@staff.com`;
-      const empUser = await prisma.user.upsert({
-        where: { email_schoolId: { email: empEmail, schoolId: school.id } },
-        update: {},
-        create: {
-          schoolId: school.id,
-          firstName: first,
-          lastName: last,
-          email: empEmail,
-          phone: `96${String(5000000 + i).padStart(8, '0')}`,
-          password: hashedPassword,
-          role: 'TEACHER',
-          isActive: true,
-          emailVerified: true,
-        },
-      });
-      await prisma.employee.upsert({
-        where: { userId: empUser.id },
-        update: {},
-        create: {
-          schoolId: school.id,
-          userId: empUser.id,
-          employeeCode: `EMP${String(i + 1).padStart(3, '0')}`,
-          departmentId: department.id,
-          designationId: designation.id,
-          dateOfBirth: new Date(1985 + i, i, 15),
-          gender: i % 2 === 0 ? 'MALE' : 'FEMALE',
-          baseSalary: BigInt(40000 + i * 5000),
-        },
-      });
-    }
-    console.log('✓ Employees created');
-
-    // ── Office Accounting: accounts, voucher heads, transactions ──
-    console.log('Creating accounting data...');
-    const cashAcct = await prisma.account.upsert({
-      where: { schoolId_name: { schoolId: school.id, name: 'Cash in Hand' } },
-      update: {},
-      create: { schoolId: school.id, name: 'Cash in Hand', type: 'CASH', openingBalance: BigInt(50000) },
-    });
-    const bankAcct = await prisma.account.upsert({
-      where: { schoolId_name: { schoolId: school.id, name: 'School Bank A/C' } },
-      update: {},
-      create: { schoolId: school.id, name: 'School Bank A/C', type: 'BANK', accountNumber: '1234567890', bankName: 'State Bank', openingBalance: BigInt(200000) },
-    });
-
-    const voucherHeads = [
-      { name: 'Tuition Income', type: 'INCOME' as const },
-      { name: 'Donation', type: 'INCOME' as const },
-      { name: 'Salaries', type: 'EXPENSE' as const },
-      { name: 'Utilities', type: 'EXPENSE' as const },
-      { name: 'Maintenance', type: 'EXPENSE' as const },
-    ];
-    const vhMap: Record<string, string> = {};
-    for (const vh of voucherHeads) {
-      const created = await prisma.voucherHead.upsert({
-        where: { schoolId_name: { schoolId: school.id, name: vh.name } },
-        update: {},
-        create: { schoolId: school.id, name: vh.name, type: vh.type },
-      });
-      vhMap[vh.name] = created.id;
-    }
-
-    const txnCount = await prisma.transaction.count({ where: { schoolId: school.id } });
-    if (txnCount === 0) {
-      const sampleTxns = [
-        { accountId: bankAcct.id, voucherHeadId: vhMap['Tuition Income'], type: 'INCOME' as const, amount: BigInt(120000), description: 'Term 1 tuition' },
-        { accountId: cashAcct.id, voucherHeadId: vhMap['Donation'], type: 'INCOME' as const, amount: BigInt(25000), description: 'Alumni donation' },
-        { accountId: bankAcct.id, voucherHeadId: vhMap['Salaries'], type: 'EXPENSE' as const, amount: BigInt(85000), description: 'Staff salaries' },
-        { accountId: cashAcct.id, voucherHeadId: vhMap['Utilities'], type: 'EXPENSE' as const, amount: BigInt(12000), description: 'Electricity bill' },
-        { accountId: cashAcct.id, voucherHeadId: vhMap['Maintenance'], type: 'EXPENSE' as const, amount: BigInt(8000), description: 'Classroom repairs' },
-      ];
-      for (let i = 0; i < sampleTxns.length; i++) {
-        const t = sampleTxns[i];
-        await prisma.transaction.create({
-          data: { schoolId: school.id, ...t, date: new Date(2026, 5, (i + 1) * 3) },
-        });
-      }
-    }
-    console.log('✓ Accounting data created');
-
-    // ─────────────────────────────────────────────────────────────────────
-    // PLATFORM / SUPER ADMIN + SUBSCRIPTION CATALOG + DEMO TENANTS
-    // ─────────────────────────────────────────────────────────────────────
+    // ── Subscription plan catalog (the plans schools subscribe to) ──
     console.log('Creating subscription plan catalog...');
     const GB = (n: number) => BigInt(n) * BigInt(1024 * 1024 * 1024);
     const planCatalog = [
-      { name: 'Free Trial',   price: 0,      billingCycle: 'monthly', maxUsers: 25,    maxStudents: 100,   storageLimit: GB(1),    featureFlags: ['attendance', 'fees'] },
-      { name: 'Basic',        price: 2999,   billingCycle: 'monthly', maxUsers: 150,   maxStudents: 1000,  storageLimit: GB(10),   featureFlags: ['attendance', 'fees', 'exams', 'library'] },
-      { name: 'Professional', price: 7999,   billingCycle: 'monthly', maxUsers: 500,   maxStudents: 5000,  storageLimit: GB(50),   featureFlags: ['attendance', 'fees', 'exams', 'library', 'transport', 'hr'] },
-      { name: 'Enterprise',   price: 19999,  billingCycle: 'monthly', maxUsers: 5000,  maxStudents: 50000, storageLimit: GB(500),  featureFlags: ['attendance', 'fees', 'exams', 'library', 'transport', 'hr', 'inventory', 'hostel', 'communication'] },
+      { name: 'Free Trial',   price: 0,     billingCycle: 'monthly', maxUsers: 25,   maxStudents: 100,   storageLimit: GB(1),   featureFlags: ['attendance', 'fees'] },
+      { name: 'Basic',        price: 2999,  billingCycle: 'monthly', maxUsers: 150,  maxStudents: 1000,  storageLimit: GB(10),  featureFlags: ['attendance', 'fees', 'exams', 'library'] },
+      { name: 'Professional', price: 7999,  billingCycle: 'monthly', maxUsers: 500,  maxStudents: 5000,  storageLimit: GB(50),  featureFlags: ['attendance', 'fees', 'exams', 'library', 'transport', 'hr'] },
+      { name: 'Enterprise',   price: 19999, billingCycle: 'monthly', maxUsers: 5000, maxStudents: 50000, storageLimit: GB(500), featureFlags: ['attendance', 'fees', 'exams', 'library', 'transport', 'hr', 'inventory', 'hostel', 'communication'] },
     ];
-    const planByName: Record<string, { id: string }> = {};
     for (const p of planCatalog) {
-      const created = await prisma.subscriptionPlan.upsert({
+      await prisma.subscriptionPlan.upsert({
         where: { name: p.name },
         update: {
           price: p.price, billingCycle: p.billingCycle, maxUsers: p.maxUsers,
@@ -569,126 +170,40 @@ async function main() {
         },
         create: { ...p, description: `${p.name} plan`, currency: 'INR' },
       });
-      planByName[p.name] = created;
     }
-    console.log('✓ Plans created');
+    console.log(`✓ ${planCatalog.length} subscription plans`);
 
-    // Platform tenant that hosts the SUPER_ADMIN account.
-    console.log('Creating platform super admin...');
+    // ── Platform tenant + SUPER_ADMIN ──
+    // A User must belong to a school, so the platform owner lives in a dedicated
+    // "platform" tenant. This is infrastructure, not a demo school.
+    console.log('Creating platform tenant & super admin...');
     const platform = await prisma.school.upsert({
-      where: { email: 'platform@eduserve.com' },
+      where: { email: 'platform@globalschoolmitra.com' },
       update: {},
       create: {
-        name: 'EduServe Platform',
+        name: 'Global School Mitra Platform',
         slug: 'platform',
-        email: 'platform@eduserve.com',
+        email: 'platform@globalschoolmitra.com',
         isActive: true,
       },
     });
     await prisma.user.upsert({
-      where: { email_schoolId: { email: 'superadmin@eduserve.com', schoolId: platform.id } },
-      update: { password: hashedPassword, role: 'SUPER_ADMIN' },
+      where: { email_schoolId: { email: SUPER_ADMIN_EMAIL, schoolId: platform.id } },
+      update: { password: hashedPassword, role: 'SUPER_ADMIN', isActive: true },
       create: {
         schoolId: platform.id,
         firstName: 'Super',
         lastName: 'Admin',
-        email: 'superadmin@eduserve.com',
+        email: SUPER_ADMIN_EMAIL,
         password: hashedPassword,
         role: 'SUPER_ADMIN',
         isActive: true,
         emailVerified: true,
       },
     });
-    console.log('✓ Super admin: superadmin@eduserve.com / test123');
+    console.log(`✓ Super admin ready: ${SUPER_ADMIN_EMAIL}`);
 
-    // Demo tenant schools spread across the last 6 months, varied statuses, so
-    // the Super Admin dashboard and charts are populated.
-    console.log('Creating demo tenant schools...');
-    const monthsAgo = (m: number) => new Date(Date.now() - m * 30 * 24 * 60 * 60 * 1000);
-    const demoSchools = [
-      { name: 'Greenwood High',        slug: 'greenwood',   plan: 'Enterprise',   status: 'ACTIVE' as const,  createdAgo: 5, endInDays: 300 },
-      { name: 'Sunrise Public School', slug: 'sunrise',     plan: 'Professional', status: 'ACTIVE' as const,  createdAgo: 4, endInDays: 250 },
-      { name: 'Riverdale Academy',     slug: 'riverdale',   plan: 'Basic',        status: 'ACTIVE' as const,  createdAgo: 3, endInDays: 200 },
-      { name: 'Oakridge International',slug: 'oakridge',    plan: 'Free Trial',   status: 'TRIAL' as const,   createdAgo: 1, endInDays: 9 },
-      { name: 'Hillview School',       slug: 'hillview',    plan: 'Free Trial',   status: 'TRIAL' as const,   createdAgo: 0, endInDays: 13 },
-      { name: 'Maple Leaf School',     slug: 'maple-leaf',  plan: 'Basic',        status: 'EXPIRED' as const, createdAgo: 6, endInDays: -10 },
-    ];
-    for (const d of demoSchools) {
-      const created = monthsAgo(d.createdAgo);
-      const ds = await prisma.school.upsert({
-        where: { slug: d.slug },
-        update: {},
-        create: {
-          name: d.name,
-          slug: d.slug,
-          email: `admin@${d.slug}.com`,
-          phone: '9000000000',
-          city: 'Mumbai',
-          state: 'MH',
-          country: 'India',
-          isActive: d.status !== 'EXPIRED',
-          createdAt: created,
-        },
-      });
-      await prisma.schoolDomain.upsert({
-        where: { domain: `${d.slug}.globalschoolmitra.com` },
-        update: {},
-        create: {
-          schoolId: ds.id, domain: `${d.slug}.globalschoolmitra.com`, type: 'subdomain',
-          isPrimary: true, isActive: true, dnsStatus: 'ACTIVE', sslStatus: 'ACTIVE', verifiedAt: created,
-        },
-      });
-      await prisma.subscription.upsert({
-        where: { schoolId: ds.id },
-        update: { status: d.status, planId: planByName[d.plan].id },
-        create: {
-          schoolId: ds.id,
-          planId: planByName[d.plan].id,
-          status: d.status,
-          startDate: created,
-          endDate: new Date(Date.now() + d.endInDays * 24 * 60 * 60 * 1000),
-          autoRenew: d.status === 'ACTIVE',
-        },
-      });
-      await prisma.user.upsert({
-        where: { email_schoolId: { email: `admin@${d.slug}.com`, schoolId: ds.id } },
-        update: {},
-        create: {
-          schoolId: ds.id, firstName: d.name.split(' ')[0], lastName: 'Admin',
-          email: `admin@${d.slug}.com`, password: hashedPassword, role: 'SCHOOL_ADMIN',
-          isActive: true, emailVerified: true, createdAt: created,
-        },
-      });
-
-      // Give each tenant a usable current academic session + classes/sections so
-      // impersonated logins land in a working school (Session/Class dropdowns,
-      // student upload, etc. all need an academic year to exist).
-      const dsYear = await prisma.academicYear.upsert({
-        where: { schoolId_name: { schoolId: ds.id, name: '2026-2027' } },
-        update: {},
-        create: {
-          schoolId: ds.id, name: '2026-2027',
-          startDate: new Date('2026-04-01'), endDate: new Date('2027-03-31'), isActive: true,
-        },
-      });
-      for (const cName of ['Nursery', 'LKG', 'UKG', '1', '2', '3', '4', '5']) {
-        const dsClass = await prisma.class.upsert({
-          where: { schoolId_name: { schoolId: ds.id, name: cName } },
-          update: {},
-          create: { schoolId: ds.id, name: cName, academicYearId: dsYear.id },
-        });
-        for (const sName of ['A', 'B']) {
-          await prisma.section.upsert({
-            where: { classId_name: { classId: dsClass.id, name: sName } },
-            update: {},
-            create: { schoolId: ds.id, classId: dsClass.id, name: sName },
-          });
-        }
-      }
-    }
-    console.log(`✓ ${demoSchools.length} demo tenant schools created (with academic year + classes)`);
-
-    console.log('✓ Seeding completed successfully');
+    console.log('✓ Production seed completed successfully');
   } catch (error) {
     console.error('Seeding error:', error);
     throw error;

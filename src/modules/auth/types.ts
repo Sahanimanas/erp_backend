@@ -42,6 +42,7 @@ export interface AuthResponse {
     role: string;
     schoolId: string;
     schoolName?: string;
+    schoolLogo?: string | null;
   };
 }
 

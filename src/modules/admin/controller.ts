@@ -195,6 +195,25 @@ export class AdminController {
     }
   }
 
+  async resetSchoolAdminPassword(req: Request, res: Response): Promise<void> {
+    try {
+      const { schoolId } = req.params;
+      const { password } = req.body ?? {};
+      const result = await adminService.resetSchoolAdminPassword(schoolId, password);
+      await auditFromRequest(req, {
+        schoolId,
+        action: AuditActions.RESET_SCHOOL_ADMIN_PASSWORD,
+        entity: 'User',
+        entityId: result.user.id,
+        // Never log the password — record only who was reset and how.
+        newValues: { email: result.user.email, generated: result.generated },
+      });
+      successResponse(res, 200, result, 'School admin password reset');
+    } catch (error: any) {
+      errorResponse(res, statusFor(error), error.message || 'Failed to reset school admin password');
+    }
+  }
+
   // ── SUBSCRIPTION PLANS ───────────────────────────────────────────────────
   async createSubscriptionPlan(req: Request, res: Response): Promise<void> {
     try {

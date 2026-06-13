@@ -51,7 +51,16 @@ export const config = {
       accessKeyId: process.env.R2_ACCESS_KEY_ID,
       secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
       bucketName: process.env.R2_BUCKET_NAME || 'school-erp-files',
-      publicUrl: process.env.R2_PUBLIC_URL || 'https://files.schoolerp.com',
+      publicUrl: (process.env.R2_PUBLIC_URL || 'https://files.schoolerp.com').replace(/\/+$/, ''),
+      get configured() {
+        return Boolean(
+          process.env.R2_ACCOUNT_ID &&
+          process.env.R2_ACCESS_KEY_ID &&
+          process.env.R2_SECRET_ACCESS_KEY &&
+          process.env.R2_BUCKET_NAME &&
+          process.env.R2_PUBLIC_URL
+        );
+      },
     },
     s3: {
       region: process.env.AWS_REGION,

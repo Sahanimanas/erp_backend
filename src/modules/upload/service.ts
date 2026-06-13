@@ -1,66 +1,104 @@
-import { v2 as cloudinary } from 'cloudinary';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { randomUUID } from 'crypto';
 import config from '@config/environment';
 
-let configured = false;
-
 /**
- * Lazily configure the Cloudinary SDK from environment variables. Done lazily
- * (rather than at import time) so the server still boots when no credentials
- * are set — the upload endpoint then returns a clear "not configured" error.
+ * Upload service backed by Cloudflare R2 (S3-compatible object storage).
+ *
+ * Endpoints stay the same (POST /uploads/image, /uploads/file); each takes a
+ * base64 data URI (or an already-hosted http(s) URL) and returns a public URL.
+ * The client is created lazily so the server still boots when R2 is unconfigured
+ * — the endpoint then returns a clear "not configured" error.
  */
-function ensureConfigured(): boolean {
-  if (!config.cloudinary.configured) return false;
-  if (!configured) {
-    cloudinary.config({
-      cloud_name: config.cloudinary.cloudName,
-      api_key: config.cloudinary.apiKey,
-      api_secret: config.cloudinary.apiSecret,
-      secure: true,
+
+let client: S3Client | null = null;
+
+function getClient(): S3Client {
+  if (!client) {
+    client = new S3Client({
+      region: 'auto',
+      endpoint: `https://${config.storage.r2.accountId}.r2.cloudflarestorage.com`,
+      credentials: {
+        accessKeyId: config.storage.r2.accessKeyId as string,
+        secretAccessKey: config.storage.r2.secretAccessKey as string,
+      },
     });
-    configured = true;
   }
-  return true;
+  return client;
+}
+
+// Map a handful of common MIME types to file extensions for nicer keys/URLs.
+const EXT: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/png': 'png',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/svg+xml': 'svg',
+  'application/pdf': 'pdf',
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.ms-excel': 'xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+};
+
+/** Parse a `data:<mime>;base64,<data>` URI into its content type + bytes. */
+function parseDataUri(source: string): { contentType: string; buffer: Buffer } | null {
+  const match = /^data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,(.+)$/is.exec(source);
+  if (!match) return null;
+  return { contentType: match[1].toLowerCase(), buffer: Buffer.from(match[2], 'base64') };
 }
 
 class UploadService {
   get isConfigured(): boolean {
-    return config.cloudinary.configured;
+    return config.storage.r2.configured;
   }
 
   /**
-   * Upload an image (data URI or remote URL) to Cloudinary and return the
-   * hosted secure URL. `folder` is appended under the configured base folder
-   * to keep students/employees/etc. organised.
+   * Upload to R2 and return the public URL. If `source` is already an http(s)
+   * URL it's returned unchanged (it's hosted somewhere already). Otherwise it
+   * must be a base64 data URI, which is decoded and stored.
    */
+  private async put(source: string, folder: string, kind: 'image' | 'file'): Promise<string> {
+    // Already-hosted URLs pass through untouched.
+    if (/^https?:\/\//i.test(source)) return source;
+
+    if (!this.isConfigured) {
+      throw new Error(
+        `${kind === 'image' ? 'Image' : 'File'} hosting is not configured. Set R2_* environment variables.`
+      );
+    }
+
+    const parsed = parseDataUri(source);
+    if (!parsed) throw new Error('Upload source must be a base64 data URI or an http(s) URL');
+
+    if (kind === 'image' && !parsed.contentType.startsWith('image/')) {
+      throw new Error('Image upload requires an image data URI');
+    }
+
+    const ext = EXT[parsed.contentType] || parsed.contentType.split('/')[1] || 'bin';
+    const key = `${folder}/${randomUUID()}.${ext}`;
+
+    await getClient().send(
+      new PutObjectCommand({
+        Bucket: config.storage.r2.bucketName,
+        Key: key,
+        Body: parsed.buffer,
+        ContentType: parsed.contentType,
+      })
+    );
+
+    return `${config.storage.r2.publicUrl}/${key}`;
+  }
+
+  /** Upload an image (data URI or remote URL) and return the hosted URL. */
   async uploadImage(source: string, folder = 'misc'): Promise<string> {
-    if (!ensureConfigured()) {
-      throw new Error('Image hosting is not configured. Set CLOUDINARY_* environment variables.');
-    }
-
-    const result = await cloudinary.uploader.upload(source, {
-      folder: `${config.cloudinary.folder}/${folder}`,
-      resource_type: 'image',
-      overwrite: true,
-    });
-
-    return result.secure_url;
+    return this.put(source, folder, 'image');
   }
 
-  /**
-   * Upload any file (pdf/doc/image) to Cloudinary using auto resource detection.
-   * Returns the hosted secure URL.
-   */
+  /** Upload any file (pdf/doc/image) and return the hosted URL. */
   async uploadFile(source: string, folder = 'docs'): Promise<string> {
-    if (!ensureConfigured()) {
-      throw new Error('File hosting is not configured. Set CLOUDINARY_* environment variables.');
-    }
-
-    const result = await cloudinary.uploader.upload(source, {
-      folder: `${config.cloudinary.folder}/${folder}`,
-      resource_type: 'auto',
-    });
-
-    return result.secure_url;
+    return this.put(source, folder, 'file');
   }
 }
 

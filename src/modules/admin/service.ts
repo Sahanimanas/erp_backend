@@ -5,6 +5,7 @@ import {
   generateAccessToken,
   generateRandomPassword,
   generateSchoolSlug,
+  validatePasswordStrength,
 } from '@common/utils/crypto';
 import {
   validateSubdomain,
@@ -425,7 +426,7 @@ export class AdminService {
 
     return {
       accessToken,
-      school: { id: school.id, name: school.name, slug: school.slug },
+      school: { id: school.id, name: school.name, slug: school.slug, logo: school.logo },
       user: {
         id: admin.id,
         firstName: admin.firstName,
@@ -434,6 +435,61 @@ export class AdminService {
         role: admin.role,
         schoolId: admin.schoolId,
       },
+    };
+  }
+
+  /**
+   * Reset the password of a school's admin account.
+   *
+   * When `newPassword` is supplied it is used (after a strength check); otherwise
+   * a strong random password is generated. The plaintext is returned exactly once
+   * so the Super Admin can hand it to the school — it is never stored in clear.
+   * All of that user's refresh tokens are revoked so existing sessions are forced
+   * to re-authenticate.
+   */
+  async resetSchoolAdminPassword(schoolId: string, newPassword?: string) {
+    const school = await db.school.findUnique({ where: { id: schoolId } });
+    if (!school) throw new Error('School not found');
+
+    const admin = await db.user.findFirst({
+      where: { schoolId, role: 'SCHOOL_ADMIN', isActive: true, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!admin) throw new Error('This school has no active admin account');
+
+    let password = newPassword?.trim();
+    const generated = !password;
+    if (password) {
+      const validation = validatePasswordStrength(password);
+      if (!validation.valid) throw new Error(validation.errors.join('. '));
+    } else {
+      password = generateRandomPassword(12);
+    }
+
+    const hashedPassword = await hashPassword(password);
+
+    await db.$transaction([
+      db.user.update({
+        where: { id: admin.id },
+        data: { password: hashedPassword, lastPasswordChange: new Date() },
+      }),
+      // Invalidate any active sessions for the impersonated admin.
+      db.refreshToken.updateMany({
+        where: { userId: admin.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
+
+    return {
+      school: { id: school.id, name: school.name, slug: school.slug },
+      user: {
+        id: admin.id,
+        firstName: admin.firstName,
+        lastName: admin.lastName,
+        email: admin.email,
+      },
+      password,
+      generated,
     };
   }
 
