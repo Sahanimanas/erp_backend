@@ -1,0 +1,207 @@
+name: CI/CD
+
+# Multi-stage pipeline for the School ERP backend.
+#
+#   Stage 1  Quality   ── lint + format-check + prisma-validate   (PR + push)
+#   Stage 2  Verify    ── typecheck + build (artifact) + test      (PR + push)
+#   Stage 3  Audit     ── npm audit                                (PR + push, non-blocking)
+#   Stage 4  Deploy    ── SSH to VPS, migrate, PM2 reload          (push to main only)
+#
+# Deploy runs only after every blocking stage above is green.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+# One pipeline per branch; deploys never overlap, but in-flight PR checks are
+# cancelled when new commits land.
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  # ─── Stage 1: Quality ────────────────────────────────────────────────────
+  lint:
+    name: Lint & format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - run: npm ci
+      - name: ESLint
+        run: npm run lint
+      - name: Prettier (format check — informational)
+        run: npx prettier --check "src/**/*.ts"
+        continue-on-error: true
+
+  prisma-validate:
+    name: Validate Prisma schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - run: npm ci
+      - name: Validate schema
+        run: npx prisma validate
+      - name: Check migrations are in sync with schema
+        run: npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --exit-code
+        continue-on-error: true
+
+  # ─── Stage 2: Verify ─────────────────────────────────────────────────────
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - run: npm ci
+      - name: Generate Prisma client
+        run: npx prisma generate
+      - name: tsc --noEmit
+        run: npm run typecheck
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - run: npm ci
+      - name: Generate Prisma client
+        run: npx prisma generate
+      - name: Build (tsc + tsc-alias)
+        run: npm run build
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: erp
+          POSTGRES_PASSWORD: erp
+          POSTGRES_DB: school_erp_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U erp"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://erp:erp@localhost:5432/school_erp_test?schema=public
+      REDIS_URL: redis://localhost:6379
+      NODE_ENV: test
+      JWT_ACCESS_SECRET: test-access-secret
+      JWT_REFRESH_SECRET: test-refresh-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - run: npm ci
+      - name: Generate Prisma client
+        run: npx prisma generate
+      - name: Apply migrations to test database
+        run: npx prisma migrate deploy
+      - name: Run tests
+        # --passWithNoTests keeps the gate green until a test suite exists;
+        # remove the flag once tests are added so an empty suite fails CI.
+        run: npx vitest run --passWithNoTests
+
+  # ─── Stage 3: Security audit (non-blocking) ──────────────────────────────
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - run: npm ci
+      - name: npm audit (high+)
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+  # ─── Stage 4: Deploy (main only) ─────────────────────────────────────────
+  deploy:
+    name: Deploy to VPS
+    needs: [lint, prisma-validate, typecheck, build, test]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    environment:
+      name: production
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            export PATH="$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node 2>/dev/null | tail -1)/bin:$PATH" 2>/dev/null || true
+            cd ~/brainwave/erp_backend
+
+            echo "▸ Pulling latest main"
+            git fetch --all --prune
+            git reset --hard origin/main
+
+            echo "▸ Installing dependencies"
+            npm ci
+
+            echo "▸ Applying database migrations"
+            npx prisma migrate deploy
+            npx prisma generate
+
+            echo "▸ Building"
+            npm run build
+
+            echo "▸ Restarting app (PM2)"
+            pm2 reload erp-backend --update-env || pm2 start dist/server.js --name erp-backend
+            pm2 save
+
+            echo "▸ Health check"
+            sleep 3
+            curl -fsS http://localhost:4000/health || (echo "Health check failed" && pm2 logs erp-backend --lines 30 --nostream && exit 1)
