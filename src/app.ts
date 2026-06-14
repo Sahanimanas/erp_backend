@@ -129,9 +129,12 @@ import admissionRoutes from '@modules/admission/routes';
 import feeMgmtRoutes from '@modules/feemgmt/routes';
 import paymentsRoutes from '@modules/payments/routes';
 import uploadRoutes from '@modules/upload/routes';
+import publicRoutes from '@modules/public/routes';
 
 // Auth routes (public, no school context needed)
 app.use(`/api/${config.domain.apiVersion}/auth`, authRoutes);
+// Public branding lookup (login page reads this before auth)
+app.use(`/api/${config.domain.apiVersion}/public`, publicRoutes);
 
 // ─────────────────────────────────────────────────────────────────────────
 // MULTI-TENANT & AUTHENTICATION MIDDLEWARE (for protected routes)
