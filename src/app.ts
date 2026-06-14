@@ -81,8 +81,10 @@ if (config.isDevelopment) {
 // BODY PARSING MIDDLEWARE
 // ─────────────────────────────────────────────────────────────────────────
 
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// Generous body limit so large photo uploads (sent as base64 JSON, ~1.33× the
+// file size) are accepted without a per-MB cap on the client.
+app.use(express.json({ limit: '60mb' }));
+app.use(express.urlencoded({ extended: true, limit: '60mb' }));
 
 // ─────────────────────────────────────────────────────────────────────────
 // PUBLIC ROUTES (No auth required, before middleware)

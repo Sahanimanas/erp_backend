@@ -216,7 +216,9 @@ export class StudentService {
     for (const k of STUDENT_COLS) {
       if (data[k] !== undefined) updateData[k] = data[k];
     }
-    if (sectionId) updateData.sectionId = sectionId;
+    // Use the relation form, not the scalar `sectionId`: a nested user update
+    // forces Prisma's *checked* update input, which only accepts `section.connect`.
+    if (sectionId) updateData.section = { connect: { id: sectionId } };
     if (data.dateOfBirth) {
       const d = new Date(data.dateOfBirth);
       if (!isNaN(d.getTime())) updateData.dateOfBirth = d;
