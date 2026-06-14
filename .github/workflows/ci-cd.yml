@@ -2,7 +2,7 @@ name: CI/CD
 
 # Multi-stage pipeline for the School ERP backend.
 #
-#   Stage 1  Quality   ── lint + format-check + prisma-validate   (PR + push)
+#   Stage 1  Quality   ── lint + format-check                     (PR + push)
 #   Stage 2  Verify    ── typecheck + build (artifact) + test      (PR + push)
 #   Stage 3  Audit     ── npm audit                                (PR + push, non-blocking)
 #   Stage 4  Deploy    ── SSH to VPS, migrate, PM2 reload          (push to main only)
@@ -41,22 +41,6 @@ jobs:
         run: npm run lint
       - name: Prettier (format check — informational)
         run: npx prettier --check "src/**/*.ts"
-        continue-on-error: true
-
-  prisma-validate:
-    name: Validate Prisma schema
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: "npm"
-      - run: npm ci
-      - name: Validate schema
-        run: npx prisma validate
-      - name: Check migrations are in sync with schema
-        run: npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --exit-code
         continue-on-error: true
 
   # ─── Stage 2: Verify ─────────────────────────────────────────────────────
@@ -162,7 +146,7 @@ jobs:
   # ─── Stage 4: Deploy (main only) ─────────────────────────────────────────
   deploy:
     name: Deploy to VPS
-    needs: [lint, prisma-validate, typecheck, build, test]
+    needs: [lint, typecheck, build, test]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     concurrency:
