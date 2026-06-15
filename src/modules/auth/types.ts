@@ -43,6 +43,7 @@ export interface AuthResponse {
     schoolId: string;
     schoolName?: string;
     schoolLogo?: string | null;
+    permissions?: string[] | null;
   };
 }
 

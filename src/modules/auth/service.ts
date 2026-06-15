@@ -31,7 +31,7 @@ export class AuthService {
       },
       include: {
         student: true,
-        employee: true,
+        employee: { include: { designation: { select: { permissions: true } } } },
         parent: true,
         school: { select: { id: true, name: true, logo: true } },
       },
@@ -122,6 +122,10 @@ export class AuthService {
         schoolId: user.schoolId,
         schoolName: (user as any).school?.name,
         schoolLogo: (user as any).school?.logo ?? null,
+        // Module privileges from the employee's designation — drive which
+        // sidebar sections/pages the user can access after login. `null` when
+        // the user has no designation (→ not restricted by privileges).
+        permissions: (user as any).employee?.designation?.permissions ?? null,
       },
     };
   }
@@ -312,6 +316,7 @@ export class AuthService {
             id: true,
             employeeCode: true,
             photo: true,
+            designation: { select: { permissions: true } },
           },
         },
         parent: {
@@ -326,7 +331,9 @@ export class AuthService {
       throw new Error('User not found');
     }
 
-    return user;
+    // Surface the employee's designation privileges at the top level so the
+    // client can gate sidebar sections/routes consistently with login.
+    return { ...user, permissions: (user as any).employee?.designation?.permissions ?? null };
   }
 }
 
