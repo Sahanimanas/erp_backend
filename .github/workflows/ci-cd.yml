@@ -166,7 +166,7 @@ jobs:
           script: |
             set -euo pipefail
             export PATH="$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node 2>/dev/null | tail -1)/bin:$PATH" 2>/dev/null || true
-            cd ~/brainwave/erp_backend
+            cd ~/erp_backend
 
             echo "▸ Pulling latest main"
             git fetch --all --prune
