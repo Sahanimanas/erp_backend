@@ -46,7 +46,12 @@ export class FeeMgmtService {
   async deleteFeeType(schoolId: string, id: string) {
     const ft = await db.classFeeType.findFirst({ where: { id, schoolId } });
     if (!ft) throw new Error('Fee type not found');
-    await db.classFeeType.update({ where: { id }, data: { deletedAt: new Date() } });
+    // Soft-delete the type AND disable its per-class structures, otherwise the
+    // student-facing fee queries (which key off `enabled`) keep charging it.
+    await db.$transaction([
+      db.classFeeType.update({ where: { id }, data: { deletedAt: new Date() } }),
+      db.classFeeStructure.updateMany({ where: { schoolId, feeTypeId: id }, data: { enabled: false } }),
+    ]);
     return { message: 'Fee type deleted' };
   }
 

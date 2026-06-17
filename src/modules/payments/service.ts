@@ -62,7 +62,7 @@ export class PaymentsService {
 
     const [structures, payments] = await Promise.all([
       classId
-        ? db.classFeeStructure.findMany({ where: { schoolId, classId, enabled: true }, include: { feeType: true } })
+        ? db.classFeeStructure.findMany({ where: { schoolId, classId, enabled: true, feeType: { deletedAt: null } }, include: { feeType: true } })
         : Promise.resolve([]),
       db.feePayment.findMany({ where: { schoolId, studentId } }),
     ]);
@@ -107,7 +107,7 @@ export class PaymentsService {
     const classId = student.section?.classId;
     const [structures, payments] = await Promise.all([
       classId
-        ? db.classFeeStructure.findMany({ where: { schoolId, classId, enabled: true }, include: { feeType: true } })
+        ? db.classFeeStructure.findMany({ where: { schoolId, classId, enabled: true, feeType: { deletedAt: null } }, include: { feeType: true } })
         : Promise.resolve([]),
       db.feePayment.findMany({ where: { schoolId, studentId } }),
     ]);
@@ -138,6 +138,10 @@ export class PaymentsService {
       });
     };
 
+    // Fee types that are actually enabled for this class. `structures` is
+    // already filtered to enabled rows, so this is the set of "live" fees.
+    const enabledFeeTypeIds = new Set((structures as any[]).map((s) => s.feeTypeId));
+
     for (const s of structures as any[]) {
       const ft = s.feeType;
       const monthLike = ['Monthly', 'Quarterly'].includes(ft.frequency) && ft.months.length;
@@ -145,7 +149,12 @@ export class PaymentsService {
       for (const m of keys) pushRow(s.feeTypeId, ft.name, ft.frequency, m, N(s.amount));
     }
     // Extra/ad-hoc charges (e.g. Add Fee Payment) not tied to a structure row.
+    // Skip charges bound to a fee type that is NOT enabled for this class so
+    // that disabling a fee in Manage Class Fee also drops its stray charges —
+    // this keeps the installments view consistent with the ledger. Truly
+    // ad-hoc charges (no feeTypeId) always show.
     for (const p of payments.filter((x) => x.kind === 'EXTRA')) {
+      if (p.feeTypeId && !enabledFeeTypeIds.has(p.feeTypeId)) continue;
       pushRow(p.feeTypeId, p.feeTypeName || 'Additional Fee', 'Other', p.month ?? null, 0);
     }
 
@@ -269,7 +278,7 @@ export class PaymentsService {
         },
         orderBy: { rollNumber: 'asc' },
       }),
-      db.classFeeStructure.findMany({ where: { schoolId, classId, enabled: true }, include: { feeType: true } }),
+      db.classFeeStructure.findMany({ where: { schoolId, classId, enabled: true, feeType: { deletedAt: null } }, include: { feeType: true } }),
     ]);
 
     const studentIds = students.map((s) => s.id);

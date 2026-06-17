@@ -54,7 +54,7 @@ export class DashboardService {
       db.user.count({ where: { schoolId, role: 'TEACHER' } }),
       db.parent.count({ where: { schoolId } }),
       db.student.findMany({ where: { schoolId, deletedAt: null }, select: { section: { select: { classId: true } } } }),
-      db.classFeeStructure.findMany({ where: { schoolId, enabled: true }, include: { feeType: true } }),
+      db.classFeeStructure.findMany({ where: { schoolId, enabled: true, feeType: { deletedAt: null } }, include: { feeType: true } }),
       db.feePayment.findMany({ where: { schoolId }, select: { amount: true, discount: true, kind: true, paidDate: true, studentId: true } }),
       db.feeCollection.findMany({ where: { schoolId }, select: { amount: true, status: true, createdAt: true } }),
       db.transaction.findMany({ where: { schoolId }, select: { type: true, amount: true } }),
