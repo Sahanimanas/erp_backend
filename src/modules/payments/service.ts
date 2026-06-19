@@ -190,8 +190,35 @@ export class PaymentsService {
   ) {
     await this.studentWithClass(schoolId, data.studentId);
     if (!data.feeTypeId) throw new Error('Fee type is required');
-    if (!(N(data.amount) > 0)) throw new Error('Amount must be greater than zero');
+    const amount = N(data.amount);
     const feeType = await db.classFeeType.findFirst({ where: { id: data.feeTypeId, schoolId } });
+
+    // DISCOUNT is a "set" operation so it can be edited: replace any prior
+    // standalone discount on this installment with the new value. An amount of 0
+    // clears the discount entirely. (PAID-row discounts are left untouched.)
+    if (data.kind === 'DISCOUNT') {
+      if (amount < 0) throw new Error('Discount must be zero or greater');
+      await db.feePayment.deleteMany({
+        where: { schoolId, studentId: data.studentId, feeTypeId: data.feeTypeId, month: data.month || null, kind: 'DISCOUNT' },
+      });
+      if (amount > 0) {
+        await db.feePayment.create({
+          data: {
+            schoolId,
+            studentId: data.studentId,
+            feeTypeId: data.feeTypeId,
+            feeTypeName: feeType?.name || null,
+            month: data.month || null,
+            amount: BigInt(Math.round(amount)),
+            kind: 'DISCOUNT',
+            note: data.note || null,
+          },
+        });
+      }
+      return { ok: true };
+    }
+
+    if (!(amount > 0)) throw new Error('Amount must be greater than zero');
     await db.feePayment.create({
       data: {
         schoolId,
@@ -199,7 +226,7 @@ export class PaymentsService {
         feeTypeId: data.feeTypeId,
         feeTypeName: feeType?.name || null,
         month: data.month || null,
-        amount: BigInt(Math.round(N(data.amount))),
+        amount: BigInt(Math.round(amount)),
         kind: data.kind,
         note: data.note || null,
       },
