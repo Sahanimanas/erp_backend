@@ -17,7 +17,7 @@ router.get('/', requireAuth, async (req: Request, res: Response) => {
     }
     const school = await db.school.findUnique({
       where: { id: schoolId },
-      select: { id: true, name: true, logo: true, email: true, phone: true, address: true },
+      select: { id: true, name: true, logo: true, watermark: true, email: true, phone: true, address: true },
     });
     successResponse(res, 200, school);
   } catch (error: any) {
@@ -34,7 +34,7 @@ router.put('/', requireAuth, requireRole('SCHOOL_ADMIN', 'PRINCIPAL'), async (re
     const schoolId = req.user?.schoolId;
     if (!schoolId) return void errorResponse(res, 400, 'No school context');
 
-    const { name, logo } = req.body ?? {};
+    const { name, logo, watermark, address, phone } = req.body ?? {};
     const data: any = {};
     if (name !== undefined) {
       const trimmed = String(name).trim();
@@ -42,12 +42,15 @@ router.put('/', requireAuth, requireRole('SCHOOL_ADMIN', 'PRINCIPAL'), async (re
       data.name = trimmed;
     }
     if (logo !== undefined) data.logo = logo || null;
+    if (watermark !== undefined) data.watermark = watermark || null;
+    if (address !== undefined) data.address = String(address).trim() || null;
+    if (phone !== undefined) data.phone = String(phone).trim() || null;
     if (!Object.keys(data).length) return void errorResponse(res, 400, 'Nothing to update');
 
     const updated = await db.school.update({
       where: { id: schoolId },
       data,
-      select: { id: true, name: true, logo: true },
+      select: { id: true, name: true, logo: true, watermark: true, address: true, phone: true, email: true },
     });
     successResponse(res, 200, updated, 'School updated successfully');
   } catch (error: any) {

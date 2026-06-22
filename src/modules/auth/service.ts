@@ -33,7 +33,7 @@ export class AuthService {
         student: true,
         employee: { include: { designation: { select: { permissions: true } } } },
         parent: true,
-        school: { select: { id: true, name: true, logo: true } },
+        school: { select: { id: true, name: true, logo: true, watermark: true, address: true, phone: true, email: true } },
       },
     });
 
@@ -122,6 +122,11 @@ export class AuthService {
         schoolId: user.schoolId,
         schoolName: (user as any).school?.name,
         schoolLogo: (user as any).school?.logo ?? null,
+        // School contact details — used on printed bills / fee receipts.
+        schoolWatermark: (user as any).school?.watermark ?? null,
+        schoolAddress: (user as any).school?.address ?? null,
+        schoolPhone: (user as any).school?.phone ?? null,
+        schoolEmail: (user as any).school?.email ?? null,
         // Module privileges from the employee's designation — drive which
         // sidebar sections/pages the user can access after login. `null` when
         // the user has no designation (→ not restricted by privileges).
@@ -303,7 +308,7 @@ export class AuthService {
         role: true,
         schoolId: true,
         isActive: true,
-        school: { select: { id: true, name: true, logo: true } },
+        school: { select: { id: true, name: true, logo: true, watermark: true, address: true, phone: true, email: true } },
         student: {
           select: {
             id: true,

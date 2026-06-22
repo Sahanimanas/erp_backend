@@ -339,6 +339,96 @@ export class PaymentsService {
     });
   }
 
+  /**
+   * Per-student fee summary for a class, oriented around the monthly fee cycle:
+   * last payment (date + amount), total fee, total left, and whether the CURRENT
+   * calendar month's installment is paid. Used by the Student Fee Details page.
+   */
+  async feeDetails(schoolId: string, classId: string) {
+    const [students, structures] = await Promise.all([
+      db.student.findMany({
+        where: { schoolId, deletedAt: null, section: { classId } },
+        select: {
+          id: true, rollNumber: true, registrationNo: true,
+          user: { select: { firstName: true, lastName: true, phone: true } },
+          section: { select: { name: true, class: { select: { name: true } } } },
+        },
+        orderBy: { rollNumber: 'asc' },
+      }),
+      db.classFeeStructure.findMany({ where: { schoolId, classId, enabled: true, feeType: { deletedAt: null } }, include: { feeType: true } }),
+    ]);
+
+    const studentIds = students.map((s) => s.id);
+    const allPayments = studentIds.length
+      ? await db.feePayment.findMany({ where: { schoolId, studentId: { in: studentIds } } })
+      : [];
+    const byStudent = new Map<string, any[]>();
+    for (const p of allPayments) {
+      const list = byStudent.get(p.studentId) || [];
+      list.push(p);
+      byStudent.set(p.studentId, list);
+    }
+
+    const now = new Date();
+    const curMonth = `${PaymentsService.MONTHS[now.getMonth()]}-${now.getFullYear()}`;
+
+    return students.map((s) => {
+      const pmts = byStudent.get(s.id) || [];
+      const { totals } = this.computeLedger(structures, pmts);
+
+      // Last payment: latest receipt (grouped by receiptNo) by paid date.
+      const recs = new Map<string, { total: number; date: Date }>();
+      for (const p of pmts) {
+        if (p.kind !== 'PAID') continue;
+        const key = p.receiptNo || p.id;
+        const r = recs.get(key) || { total: 0, date: p.paidDate ?? p.createdAt };
+        r.total += N(p.amount);
+        const d = p.paidDate ?? p.createdAt;
+        if (d && new Date(d) > new Date(r.date)) r.date = d;
+        recs.set(key, r);
+      }
+      let lastPaidDate: Date | null = null;
+      let lastPaidAmount = 0;
+      for (const r of recs.values()) {
+        if (!lastPaidDate || new Date(r.date) > new Date(lastPaidDate)) { lastPaidDate = r.date; lastPaidAmount = r.total; }
+      }
+
+      // Current-month status across monthly/quarterly fee types that bill this month.
+      const aggM = (feeTypeId: string, kind: string, field: 'amount' | 'discount' = 'amount') =>
+        pmts.filter((p) => p.feeTypeId === feeTypeId && (p.month ?? null) === curMonth && p.kind === kind)
+          .reduce((acc, p) => acc + N((p as any)[field]), 0);
+      let curApplicable = false;
+      let curDue = 0;
+      for (const st of structures as any[]) {
+        const ft = st.feeType;
+        const monthLike = ['Monthly', 'Quarterly'].includes(ft.frequency) && ft.months.length;
+        if (!monthLike || !ft.months.includes(curMonth)) continue;
+        curApplicable = true;
+        const perMonth = N(st.amount);
+        const paidM = aggM(st.feeTypeId, 'PAID');
+        const discM = aggM(st.feeTypeId, 'DISCOUNT') + aggM(st.feeTypeId, 'PAID', 'discount');
+        const extraM = aggM(st.feeTypeId, 'EXTRA');
+        curDue += Math.max(0, perMonth + extraM - discM - paidM);
+      }
+      const currentMonthStatus = !curApplicable ? 'N/A' : curDue <= 0 ? 'Paid' : 'Pending';
+
+      return {
+        studentId: s.id,
+        rollNumber: s.rollNumber,
+        regId: s.registrationNo ?? '',
+        name: `${s.user?.firstName ?? ''} ${s.user?.lastName ?? ''}`.trim(),
+        class: `${s.section?.class?.name ?? ''}-${s.section?.name ?? ''}`,
+        phone: s.user?.phone ?? '',
+        lastPaidDate,
+        lastPaidAmount,
+        totalFee: totals.expected,
+        totalLeft: totals.due,
+        currentMonth: curMonth,
+        currentMonthStatus,
+      };
+    });
+  }
+
   // ── Bulk discount / extra (session-wide, class-wide, or specific students) ──
   async bulkApply(
     schoolId: string,

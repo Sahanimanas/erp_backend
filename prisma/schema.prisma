@@ -96,6 +96,7 @@ model School {
   pincode            String?
   country            String?
   logo               String?
+  watermark          String?
   website            String?
   foundedYear        Int?
   principalName      String?

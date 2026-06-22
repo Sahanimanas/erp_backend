@@ -8,6 +8,9 @@ const COLLECTOR = ['SCHOOL_ADMIN', 'PRINCIPAL', 'ACCOUNTANT'] as const;
 // Per-class fee export (declared before /:studentId routes)
 router.get('/export', requireAuth, (req, res) => paymentsController.exportClass(req, res));
 
+// Per-class student fee-details summary (last payment, totals, current-month status)
+router.get('/fee-details', requireAuth, (req, res) => paymentsController.feeDetails(req, res));
+
 // Late fee rules
 router.get('/late-fee-rules', requireAuth, (req, res) => paymentsController.listRules(req, res));
 router.post('/late-fee-rules', requireAuth, requireRole(...COLLECTOR), (req, res) => paymentsController.createRule(req, res));
