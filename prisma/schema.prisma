@@ -49,6 +49,20 @@ enum AttendanceStatus {
   HALF_DAY
 }
 
+// Biometric / device attendance capture modes. A school may run any mix of
+// these depending on the hardware it owns (RFID readers, fingerprint scanners,
+// face terminals); each physical device declares which one it is.
+enum BiometricModality {
+  RFID
+  FINGERPRINT
+  FACE
+}
+
+enum PunchDirection {
+  IN
+  OUT
+}
+
 enum LeaveStatus {
   PENDING
   APPROVED
@@ -123,6 +137,9 @@ model School {
   exams              Exam[]
   auditLogs          AuditLog[]
   academicYears      AcademicYear[]
+  biometricDevices     BiometricDevice[]
+  biometricEnrollments BiometricEnrollment[]
+  attendancePunches    AttendancePunch[]
 
   @@index([slug])
   @@index([isActive])
@@ -223,7 +240,10 @@ model User {
   schoolId           String
   firstName          String
   lastName           String
-  email              String
+  // Optional: bulk-imported students often have no email. Never fabricate one —
+  // a blank email is stored as NULL. Postgres treats NULLs as distinct, so many
+  // emailless users coexist under the @@unique([email, schoolId]) index.
+  email              String?
   phone              String?
   password           String
   role               UserRole
@@ -452,6 +472,9 @@ model Student {
   admissionNumber String?  @unique
   registrationNo String?
   feePlan        String?
+  // Academic session the student belongs to, e.g. "2025-2026". Free-text so it
+  // works whether or not the school manages sessions under Settings → Sessions.
+  session        String?
 
   // Prior education history: array of { courseName, passingYear, marksOrGrade, schoolName }
   educationHistory Json?
@@ -496,6 +519,8 @@ model Student {
   fees        FeeCollection[]
   marks       StudentMark[]
   documents   StudentDocument[]
+  biometricEnrollments BiometricEnrollment[]
+  attendancePunches    AttendancePunch[]
 
   @@unique([schoolId, rollNumber])
   @@index([schoolId])
@@ -772,6 +797,93 @@ model StudentAttendance {
   @@index([schoolId])
   @@index([studentId])
   @@index([date])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// BIOMETRIC / DEVICE ATTENDANCE
+// A physical attendance terminal (RFID / fingerprint / face). The device posts
+// punch events to the public ingest endpoint, authenticating with `apiKey`.
+// ─────────────────────────────────────────────────────────────────────────
+model BiometricDevice {
+  id           String            @id @default(cuid())
+  schoolId     String
+  name         String
+  modality     BiometricModality
+  // Serial / device id the hardware reports in its payload (used as a fallback
+  // match when the API key is shared or proxied).
+  serialNumber String?
+  // Secret the device sends (header `x-device-key`) to authenticate ingestion.
+  apiKey       String            @unique
+  ipAddress    String?
+  location     String?
+  // A first IN punch at/after this minute-of-day is marked LATE (default 09:00).
+  lateAfterMinutes Int           @default(540)
+  isActive     Boolean           @default(true)
+  lastSeenAt   DateTime?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  school      School                @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  enrollments BiometricEnrollment[]
+  punches     AttendancePunch[]
+
+  @@index([schoolId])
+  @@index([serialNumber])
+}
+
+// Maps a device-side identity (the user id enrolled on the terminal, and/or an
+// RFID card number) to an ERP student, so an incoming punch can be resolved.
+model BiometricEnrollment {
+  id           String            @id @default(cuid())
+  schoolId     String
+  studentId    String
+  modality     BiometricModality
+  // The user/person id configured on the terminal (Hikvision employeeNoString).
+  deviceUserId String?
+  // RFID card number, when the modality is card-based.
+  cardNumber   String?
+  // Optional: restrict this mapping to one device (else any device matches).
+  deviceId     String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  school  School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  student Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  device  BiometricDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  @@unique([schoolId, deviceUserId])
+  @@unique([schoolId, cardNumber])
+  @@index([schoolId])
+  @@index([studentId])
+  @@index([cardNumber])
+}
+
+// Raw punch log — one row per scan received from a device. `studentId` is set
+// when the punch resolves to an enrollment; unmatched punches are still stored
+// (matched = false) so admins can fix enrollment and reprocess.
+model AttendancePunch {
+  id         String            @id @default(cuid())
+  schoolId   String
+  deviceId   String?
+  studentId  String?
+  // Identifier the device reported (employeeNo / personId) before resolution.
+  rawUserId  String?
+  cardNumber String?
+  modality   BiometricModality
+  direction  PunchDirection    @default(IN)
+  eventTime  DateTime
+  matched    Boolean           @default(false)
+  raw        Json?
+  createdAt  DateTime          @default(now())
+
+  school  School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  device  BiometricDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  student Student?         @relation(fields: [studentId], references: [id], onDelete: SetNull)
+
+  @@index([schoolId])
+  @@index([deviceId])
+  @@index([studentId])
+  @@index([eventTime])
 }
 
 // ─────────────────────────────────────────────────────────────────────────

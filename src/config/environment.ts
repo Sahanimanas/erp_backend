@@ -87,6 +87,16 @@ export const config = {
     phoneNumber: process.env.TWILIO_PHONE_NUMBER,
   },
 
+  // WhatsApp (Baileys — WhatsApp Web multi-device)
+  // Each school links its own number once (QR / pairing code); credentials are
+  // persisted per-school under `sessionDir/<schoolId>` so the same number is
+  // reused to send messages and media to many recipients.
+  whatsapp: {
+    sessionDir: process.env.WHATSAPP_SESSION_DIR || './storage/whatsapp',
+    // Friendly device name shown in WhatsApp → Linked Devices.
+    deviceName: process.env.WHATSAPP_DEVICE_NAME || 'School ERP',
+  },
+
   // Domain
   domain: {
     platform: process.env.PLATFORM_DOMAIN || 'globalschoolmitra.com',

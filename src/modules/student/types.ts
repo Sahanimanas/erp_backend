@@ -34,6 +34,7 @@ export interface CreateStudentRequest {
   admissionNumber?: string;
   registrationNo?: string;
   feePlan?: string;
+  session?: string;
   educationHistory?: StudentEducationRow[];
   photo?: string;
   fatherName?: string;
@@ -88,6 +89,7 @@ export interface UpdateStudentRequest {
   remarks?: string;
   registrationNo?: string;
   feePlan?: string;
+  session?: string;
   educationHistory?: StudentEducationRow[];
   photo?: string;
   fatherName?: string;

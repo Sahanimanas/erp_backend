@@ -44,18 +44,21 @@ export class StudentService {
       throw new Error('Section not found');
     }
 
-    // Check if email already exists in school
-    const existingUser = await db.user.findUnique({
-      where: {
-        email_schoolId: {
-          email,
-          schoolId,
+    // Check if email already exists in school — only when an email was provided.
+    // Email is optional; a blank one is stored as NULL (never auto-generated).
+    if (email) {
+      const existingUser = await db.user.findUnique({
+        where: {
+          email_schoolId: {
+            email,
+            schoolId,
+          },
         },
-      },
-    });
+      });
 
-    if (existingUser) {
-      throw new Error('Email already exists');
+      if (existingUser) {
+        throw new Error('Email already exists');
+      }
     }
 
     // Check if roll number already exists in section
@@ -90,7 +93,7 @@ export class StudentService {
           schoolId,
           firstName: data.firstName,
           lastName: data.lastName,
-          email,
+          email: email || null,
           phone: data.phone,
           password: hashedPassword,
           role: 'STUDENT' as any,
@@ -120,6 +123,7 @@ export class StudentService {
           admissionNumber: data.admissionNumber,
           registrationNo: data.registrationNo,
           feePlan: data.feePlan,
+          session: data.session,
           educationHistory: Array.isArray(data.educationHistory) && data.educationHistory.length
             ? (data.educationHistory as any)
             : undefined,
@@ -205,7 +209,7 @@ export class StudentService {
     const STUDENT_COLS: (keyof UpdateStudentRequest)[] = [
       'rollNumber', 'gender', 'bloodGroup', 'category', 'caste', 'religion', 'motherTongue',
       'aadharNumber', 'penNumber', 'apaarNo', 'smartCardNo', 'height', 'weight', 'remarks',
-      'admissionNumber', 'registrationNo', 'feePlan', 'photo',
+      'admissionNumber', 'registrationNo', 'feePlan', 'session', 'photo',
       'fatherName', 'motherName', 'fatherAadhar', 'motherAadhar', 'fatherOccupation',
       'motherOccupation', 'fatherQualification', 'motherQualification',
       'guardianName', 'guardianPhone', 'guardianEmail',
@@ -235,7 +239,11 @@ export class StudentService {
     const userUpdate: any = {};
     if (data.firstName !== undefined) userUpdate.firstName = data.firstName;
     if (data.lastName !== undefined) userUpdate.lastName = data.lastName;
-    if (data.email !== undefined) userUpdate.email = data.email;
+    // Email is optional: when the field is sent blank/whitespace, clear it to
+    // NULL (don't store "" — that would collide on the email+school unique index).
+    if (data.email !== undefined) {
+      userUpdate.email = typeof data.email === 'string' && data.email.trim() ? data.email.trim() : null;
+    }
     if (data.phone !== undefined) userUpdate.phone = data.phone;
     if (data.enabled !== undefined) userUpdate.isActive = data.enabled;
     if (data.password) userUpdate.password = await hashPassword(data.password);
@@ -558,7 +566,7 @@ export class StudentService {
       return isNaN(d.getTime()) ? new Date('2010-01-01') : d;
     };
 
-    type Cand = { i: number; r: any; userId: string; email: string; rollNumber: string };
+    type Cand = { i: number; r: any; userId: string; email: string | null; rollNumber: string };
     const cands: Cand[] = [];
     const emailSeen = new Set<string>();   // de-dupe within the file
     const rollSeen = new Set<string>();
@@ -569,33 +577,39 @@ export class StudentService {
       if (!r.firstName) { errors.push(`Row ${i + 1}: firstName is required`); return; }
       if (!r._classId || !r._sectionId) { errors.push(`Row ${i + 1} (${r.firstName}): class/section could not be resolved`); return; }
 
-      const email = String(r.email || `${(r.rollNumber || r.registrationNo || `stu${i}${Date.now()}`)}@student.local`).toLowerCase();
-      if (emailSeen.has(email)) { errors.push(`Row ${i + 1} (${r.firstName}): duplicate email in file (${email})`); return; }
+      // Use ONLY the email supplied in the sheet — never fabricate one. A blank
+      // email column means the student has no login email (stored as NULL), so
+      // imports no longer collide on synthetic "<roll>@student.local" addresses.
+      const email = r.email ? String(r.email).toLowerCase() : null;
+      if (email && emailSeen.has(email)) { errors.push(`Row ${i + 1} (${r.firstName}): duplicate email in file (${email})`); return; }
 
       const rollNumber = String(r.rollNumber || r.registrationNo || `AUTO-${Date.now()}-${i}`);
       const rollKey = rollNumber.toLowerCase();
       if (rollSeen.has(rollKey)) { errors.push(`Row ${i + 1} (${r.firstName}): duplicate roll number in file (${rollNumber})`); return; }
 
-      emailSeen.add(email);
+      if (email) emailSeen.add(email);
       rollSeen.add(rollKey);
       cands.push({ i, r, userId: randomUUID(), email, rollNumber });
     });
 
     // Bulk-check what already exists in this school (two queries, not per-row).
-    const emails = cands.map((c) => c.email);
+    // Only real (non-null) emails are checked — emailless rows can't collide.
+    const emails = cands.map((c) => c.email).filter((e): e is string => Boolean(e));
     const rolls = cands.map((c) => c.rollNumber);
     const [takenEmails, takenRolls] = await Promise.all([
       emails.length ? db.user.findMany({ where: { schoolId, email: { in: emails } }, select: { email: true } }) : Promise.resolve([]),
       rolls.length ? db.student.findMany({ where: { schoolId, rollNumber: { in: rolls } }, select: { rollNumber: true } }) : Promise.resolve([]),
     ]);
-    const takenEmailSet = new Set(takenEmails.map((u) => u.email.toLowerCase()));
+    const takenEmailSet = new Set(
+      takenEmails.map((u) => u.email?.toLowerCase()).filter((e): e is string => Boolean(e))
+    );
     const takenRollSet = new Set(takenRolls.map((s) => s.rollNumber.toLowerCase()));
 
     const userRows: any[] = [];
     const studentRows: any[] = [];
     for (const c of cands) {
       const { r } = c;
-      if (takenEmailSet.has(c.email)) { errors.push(`Row ${c.i + 1} (${r.firstName}): email already exists (${c.email})`); continue; }
+      if (c.email && takenEmailSet.has(c.email)) { errors.push(`Row ${c.i + 1} (${r.firstName}): email already exists (${c.email})`); continue; }
       if (takenRollSet.has(c.rollNumber.toLowerCase())) { errors.push(`Row ${c.i + 1} (${r.firstName}): roll number already exists (${c.rollNumber})`); continue; }
 
       // Null out blank / within-file-duplicate unique optional fields so they

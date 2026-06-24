@@ -130,11 +130,17 @@ import feeMgmtRoutes from '@modules/feemgmt/routes';
 import paymentsRoutes from '@modules/payments/routes';
 import uploadRoutes from '@modules/upload/routes';
 import publicRoutes from '@modules/public/routes';
+import whatsappRoutes from '@modules/whatsapp/routes';
+import biometricRoutes from '@modules/biometric/routes';
+import deviceIngestRoutes from '@modules/biometric/ingest.routes';
 
 // Auth routes (public, no school context needed)
 app.use(`/api/${config.domain.apiVersion}/auth`, authRoutes);
 // Public branding lookup (login page reads this before auth)
 app.use(`/api/${config.domain.apiVersion}/public`, publicRoutes);
+// Public biometric device ingest — devices authenticate with their own API key
+// (no user JWT), so this must sit before the tenant/auth middleware below.
+app.use(`/api/${config.domain.apiVersion}/device`, deviceIngestRoutes);
 
 // ─────────────────────────────────────────────────────────────────────────
 // MULTI-TENANT & AUTHENTICATION MIDDLEWARE (for protected routes)
@@ -162,6 +168,8 @@ app.use(`/api/${config.domain.apiVersion}/accounting`, accountingRoutes);
 app.use(`/api/${config.domain.apiVersion}/exams`, examsRoutes);
 app.use(`/api/${config.domain.apiVersion}/timetable`, timetableRoutes);
 app.use(`/api/${config.domain.apiVersion}/notifications`, notificationRoutes);
+app.use(`/api/${config.domain.apiVersion}/whatsapp`, whatsappRoutes);
+app.use(`/api/${config.domain.apiVersion}/biometric`, biometricRoutes);
 app.use(`/api/${config.domain.apiVersion}/uploads`, uploadRoutes);
 
 // ─────────────────────────────────────────────────────────────────────────

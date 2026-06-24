@@ -117,7 +117,7 @@ export class AuthService {
         id: user.id,
         firstName: user.firstName,
         lastName: user.lastName,
-        email: user.email,
+        email: user.email ?? '',
         role: user.role,
         schoolId: user.schoolId,
         schoolName: (user as any).school?.name,
