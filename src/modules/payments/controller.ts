@@ -63,6 +63,15 @@ export class PaymentsController {
     } catch (e: any) { errorResponse(res, codeFor(e), e.message); }
   }
 
+  async monthlyDues(req: Request, res: Response): Promise<void> {
+    try {
+      const { classId, month } = req.query;
+      if (!classId) return void errorResponse(res, 400, 'classId is required');
+      const data = await paymentsService.classMonthlyDues(req.user!.schoolId, classId as string, (month as string) || undefined);
+      successResponse(res, 200, data);
+    } catch (e: any) { errorResponse(res, codeFor(e), e.message); }
+  }
+
   async feeDetails(req: Request, res: Response): Promise<void> {
     try {
       const { classId } = req.query;

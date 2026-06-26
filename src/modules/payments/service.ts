@@ -98,20 +98,14 @@ export class PaymentsService {
   }
 
   /**
-   * Per-installment ledger: one row per fee type × applicable month (or "Only
-   * Once" for Session/One-time), each with total / paid / discount / due / status.
-   * Payments and adjustments are matched by (feeTypeId, month).
+   * Pure per-installment builder (no DB): one row per fee type × applicable
+   * month (or "Only Once" for Session/One-time) + ad-hoc EXTRA charges, each
+   * with total / paid / discount / due / status and a dueDate. Shared by the
+   * single-student installments view and the batched month-scoped demand so
+   * both stay consistent. `admissionDate` is the dueDate fallback for fees with
+   * no month (Session / One-time / ad-hoc).
    */
-  async getInstallments(schoolId: string, studentId: string) {
-    const student = await this.studentWithClass(schoolId, studentId);
-    const classId = student.section?.classId;
-    const [structures, payments] = await Promise.all([
-      classId
-        ? db.classFeeStructure.findMany({ where: { schoolId, classId, enabled: true, feeType: { deletedAt: null } }, include: { feeType: true } })
-        : Promise.resolve([]),
-      db.feePayment.findMany({ where: { schoolId, studentId } }),
-    ]);
-
+  private buildInstallmentRows(structures: any[], payments: any[], admissionDate?: Date | null) {
     const agg = (feeTypeId: string | null, month: string | null, kind: string, field: 'amount' | 'discount' = 'amount') =>
       payments
         .filter((p) => p.feeTypeId === feeTypeId && (p.month ?? null) === (month ?? null) && p.kind === kind)
@@ -131,7 +125,7 @@ export class PaymentsService {
       rows.push({
         feeTypeId, name, frequency,
         month, monthLabel: month || 'Only Once',
-        dueDate: this.parseMonth(month) || (student as any).admissionDate || new Date(),
+        dueDate: this.parseMonth(month) || admissionDate || new Date(),
         previousDue: 0,
         totalAmount, paid, discount, due,
         status: due <= 0 && totalAmount > 0 ? 'Success' : 'Pending',
@@ -159,6 +153,25 @@ export class PaymentsService {
     }
 
     rows.sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+    return rows;
+  }
+
+  /**
+   * Per-installment ledger: one row per fee type × applicable month (or "Only
+   * Once" for Session/One-time), each with total / paid / discount / due / status.
+   * Payments and adjustments are matched by (feeTypeId, month).
+   */
+  async getInstallments(schoolId: string, studentId: string) {
+    const student = await this.studentWithClass(schoolId, studentId);
+    const classId = student.section?.classId;
+    const [structures, payments] = await Promise.all([
+      classId
+        ? db.classFeeStructure.findMany({ where: { schoolId, classId, enabled: true, feeType: { deletedAt: null } }, include: { feeType: true } })
+        : Promise.resolve([]),
+      db.feePayment.findMany({ where: { schoolId, studentId } }),
+    ]);
+
+    const rows = this.buildInstallmentRows(structures, payments, (student as any).admissionDate);
     const totals = rows.reduce(
       (t, r) => ({ total: t.total + r.totalAmount, paid: t.paid + r.paid, discount: t.discount + r.discount, due: t.due + r.due }),
       { total: 0, paid: 0, discount: 0, due: 0 }
@@ -425,6 +438,96 @@ export class PaymentsService {
         totalLeft: totals.due,
         currentMonth: curMonth,
         currentMonthStatus,
+      };
+    });
+  }
+
+  /**
+   * Month-scoped class demand: for the selected month, split each student's
+   * outstanding dues into `previousDue` (everything due BEFORE the selected
+   * month) and `currentDue` (fees actually configured for the selected month).
+   * `lines` itemises the current month's fees for the printable demand bill.
+   *
+   * When no month is selected the whole outstanding ledger is treated as
+   * "current" (legacy behaviour). This is what makes month selection meaningful
+   * — a month with no configured fee yields currentDue = 0 instead of repeating
+   * the same total for every month.
+   */
+  async classMonthlyDues(schoolId: string, classId: string, month?: string) {
+    const [students, structures] = await Promise.all([
+      db.student.findMany({
+        where: { schoolId, deletedAt: null, section: { classId } },
+        select: {
+          id: true, rollNumber: true, registrationNo: true, fatherName: true, admissionDate: true,
+          user: { select: { firstName: true, lastName: true, phone: true } },
+          section: { select: { name: true, class: { select: { name: true } } } },
+        },
+        orderBy: { rollNumber: 'asc' },
+      }),
+      db.classFeeStructure.findMany({ where: { schoolId, classId, enabled: true, feeType: { deletedAt: null } }, include: { feeType: true } }),
+    ]);
+
+    const studentIds = students.map((s) => s.id);
+    const allPayments = studentIds.length
+      ? await db.feePayment.findMany({ where: { schoolId, studentId: { in: studentIds } } })
+      : [];
+    const byStudent = new Map<string, any[]>();
+    for (const p of allPayments) {
+      const list = byStudent.get(p.studentId) || [];
+      list.push(p);
+      byStudent.set(p.studentId, list);
+    }
+
+    // Window for the selected month [monthStart, monthEnd]. A row is "current"
+    // if its installment month matches the selection, or (for monthless fees)
+    // its dueDate falls inside the window; anything due earlier is "previous".
+    const md = this.parseMonth(month);
+    const monthStart = md ? new Date(md.getFullYear(), md.getMonth(), 1) : null;
+    const monthEnd = md ? new Date(md.getFullYear(), md.getMonth() + 1, 0, 23, 59, 59, 999) : null;
+
+    return students.map((s) => {
+      const rows = this.buildInstallmentRows(structures, byStudent.get(s.id) || [], (s as any).admissionDate);
+      let previousDue = 0;
+      let currentDue = 0;
+      const lines: { name: string; month: string; amount: number }[] = [];
+
+      for (const r of rows) {
+        if (r.due <= 0) continue;
+        let bucket: 'previous' | 'current' | 'future';
+        if (!month || !monthStart) {
+          bucket = 'current'; // no month picked → legacy "all outstanding"
+        } else if (r.month === month) {
+          bucket = 'current';
+        } else {
+          const d = new Date(r.dueDate);
+          if (d < monthStart) bucket = 'previous';
+          else if (monthEnd && d <= monthEnd) bucket = 'current';
+          else bucket = 'future';
+        }
+        if (bucket === 'current') {
+          currentDue += r.due;
+          lines.push({ name: r.name, month: r.monthLabel, amount: r.due });
+        } else if (bucket === 'previous') {
+          previousDue += r.due;
+        }
+      }
+
+      const totalDue = previousDue + currentDue;
+      return {
+        studentId: s.id,
+        rollNumber: s.rollNumber,
+        regId: s.registrationNo ?? '',
+        name: `${s.user?.firstName ?? ''} ${s.user?.lastName ?? ''}`.trim(),
+        fatherName: s.fatherName ?? '',
+        class: `${s.section?.class?.name ?? ''}-${s.section?.name ?? ''}`,
+        section: s.section?.name ?? '',
+        phone: s.user?.phone ?? '',
+        month: month || '',
+        previousDue,
+        currentDue,
+        totalDue,
+        due: totalDue, // back-compat: existing UIs read `due` as the demand total
+        lines,
       };
     });
   }
