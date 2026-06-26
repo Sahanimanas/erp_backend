@@ -6,14 +6,25 @@ export class StudentController {
   async createStudent(req: Request, res: Response): Promise<void> {
     try {
       const schoolId = req.user?.schoolId;
-      const { firstName, lastName, email, password, sectionId, classId, sectionName, rollNumber } = req.body;
+      const { firstName, lastName, password, sectionId, classId, sectionName, rollNumber } = req.body;
 
+      // Email is intentionally NOT required — the service stores it as NULL when
+      // blank (matching the "auto from roll no if blank" UI hint and the bulk
+      // import path). Report the actual missing field so the toast isn't
+      // misleading (it used to always blame "class & section").
       const hasSection = sectionId || (classId && sectionName);
-      if (!schoolId || !firstName || !lastName || !email || !password || !hasSection || !rollNumber) {
-        return void errorResponse(res, 400, 'Required fields missing (need class & section)');
+      const missing =
+        !schoolId ? 'school context' :
+        !firstName ? 'first name' :
+        !lastName ? 'last name' :
+        !password ? 'password' :
+        !hasSection ? 'class & section' :
+        !rollNumber ? 'roll number' : null;
+      if (missing) {
+        return void errorResponse(res, 400, `Required field missing: ${missing}`);
       }
 
-      const student = await studentService.createStudent(schoolId, req.body);
+      const student = await studentService.createStudent(schoolId!, req.body);
       createdResponse(res, student, 'Student created successfully');
     } catch (error: any) {
       errorResponse(res, 400, error.message || 'Failed to create student');

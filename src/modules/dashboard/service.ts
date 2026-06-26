@@ -55,11 +55,19 @@ export class DashboardService {
       db.parent.count({ where: { schoolId } }),
       db.student.findMany({ where: { schoolId, deletedAt: null }, select: { section: { select: { classId: true } } } }),
       db.classFeeStructure.findMany({ where: { schoolId, enabled: true, feeType: { deletedAt: null } }, include: { feeType: true } }),
-      db.feePayment.findMany({ where: { schoolId }, select: { amount: true, discount: true, kind: true, paidDate: true, studentId: true } }),
+      db.feePayment.findMany({ where: { schoolId }, select: { id: true, amount: true, discount: true, fine: true, kind: true, paidDate: true, studentId: true, month: true, mode: true, feeTypeName: true, receiptNo: true } }),
       db.feeCollection.findMany({ where: { schoolId }, select: { amount: true, status: true, createdAt: true } }),
       db.transaction.findMany({ where: { schoolId }, select: { type: true, amount: true } }),
       db.studentAttendance.groupBy({ by: ['status'], where: { schoolId, date: { gte: attStart, lt: attEnd } }, _count: true }),
-      db.student.findMany({ where: { schoolId }, orderBy: { createdAt: 'desc' }, take: 3, select: { createdAt: true, user: { select: { firstName: true, lastName: true } } } }),
+      db.student.findMany({
+        where: { schoolId }, orderBy: { createdAt: 'desc' }, take: 3,
+        select: {
+          id: true, createdAt: true, rollNumber: true, admissionNumber: true,
+          admissionDate: true, gender: true,
+          user: { select: { firstName: true, lastName: true, phone: true, email: true } },
+          section: { select: { name: true, class: { select: { name: true } } } },
+        },
+      }),
     ]);
     const weekAttendance = await weekAttendancePromise;
 
@@ -139,15 +147,41 @@ export class DashboardService {
       });
     }
 
-    // Recent activities (recentStudents prefetched above).
-    const activities: { icon: string; bg: string; title: string; detail: string; time: string }[] = [];
+    // Recent activities (recentStudents prefetched above). Each carries a `type`
+    // and a structured `details` list so the dashboard can open a detail panel
+    // when an activity row is clicked, plus a `ts` for cross-source ordering.
+    type Activity = {
+      type: 'admission' | 'payment';
+      id: string;
+      icon: string; bg: string;
+      title: string; detail: string; time: string;
+      ts: number;
+      details: { label: string; value: string }[];
+    };
+    const activities: Activity[] = [];
+    const inr = (v: any) => `₹${N(v).toLocaleString('en-IN')}`;
     recentStudents.forEach((student) => {
+      const fullName = `${student.user?.firstName ?? ''} ${student.user?.lastName ?? ''}`.trim();
+      const classLabel = [student.section?.class?.name, student.section?.name].filter(Boolean).join(' - ');
       activities.push({
+        type: 'admission',
+        id: student.id,
         icon: '📋',
         bg: 'bg-indigo-50',
         title: 'New student admitted',
-        detail: `${student.user?.firstName} ${student.user?.lastName}`,
+        detail: fullName || 'student',
         time: this.timeAgo(student.createdAt || new Date()),
+        ts: new Date(student.createdAt || new Date()).getTime(),
+        details: [
+          { label: 'Student Name', value: fullName || '—' },
+          { label: 'Class', value: classLabel || '—' },
+          { label: 'Roll Number', value: student.rollNumber || '—' },
+          { label: 'Admission No', value: student.admissionNumber || '—' },
+          { label: 'Gender', value: student.gender || '—' },
+          { label: 'Phone', value: student.user?.phone || '—' },
+          { label: 'Email', value: student.user?.email || '—' },
+          { label: 'Admission Date', value: this.fmtDate(student.admissionDate) },
+        ],
       });
     });
 
@@ -158,18 +192,43 @@ export class DashboardService {
       .slice(0, 3);
     const recentSids = [...new Set(recentFeePayments.map((p) => p.studentId))];
     const recentStuds = recentSids.length
-      ? await db.student.findMany({ where: { id: { in: recentSids } }, include: { user: true } })
+      ? await db.student.findMany({
+          where: { id: { in: recentSids } },
+          include: { user: true, section: { select: { name: true, class: { select: { name: true } } } } },
+        })
       : [];
+    const studById = new Map(recentStuds.map((s) => [s.id, s]));
     const nameById = new Map(recentStuds.map((s) => [s.id, `${s.user?.firstName ?? ''} ${s.user?.lastName ?? ''}`.trim()]));
     recentFeePayments.forEach((payment) => {
+      const stud = studById.get(payment.studentId) as any;
+      const name = nameById.get(payment.studentId) || 'student';
+      const classLabel = [stud?.section?.class?.name, stud?.section?.name].filter(Boolean).join(' - ');
       activities.push({
+        type: 'payment',
+        id: payment.id,
         icon: '💰',
         bg: 'bg-emerald-50',
         title: 'Fee payment received',
-        detail: `₹${N(payment.amount)} from ${nameById.get(payment.studentId) || 'student'}`,
+        detail: `${inr(payment.amount)} from ${name}`,
         time: this.timeAgo(payment.paidDate || new Date()),
+        ts: new Date(payment.paidDate || new Date()).getTime(),
+        details: [
+          { label: 'Student Name', value: name },
+          { label: 'Class', value: classLabel || '—' },
+          { label: 'Amount Paid', value: inr(payment.amount) },
+          { label: 'Discount', value: inr(payment.discount) },
+          { label: 'Fine', value: inr(payment.fine) },
+          { label: 'Fee Type', value: payment.feeTypeName || '—' },
+          { label: 'Month', value: payment.month || '—' },
+          { label: 'Mode', value: payment.mode || '—' },
+          { label: 'Receipt No', value: payment.receiptNo || '—' },
+          { label: 'Paid Date', value: this.fmtDate(payment.paidDate) },
+        ],
       });
     });
+
+    // Newest first across both sources.
+    activities.sort((a, b) => b.ts - a.ts);
 
     return {
       students: studentCount,
@@ -204,6 +263,11 @@ export class DashboardService {
     if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
     if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
     return `${Math.floor(seconds / 86400)}d ago`;
+  }
+
+  private fmtDate(date?: Date | null): string {
+    if (!date) return '—';
+    return new Date(date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   }
 }
 
