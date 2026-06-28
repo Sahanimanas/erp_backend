@@ -506,6 +506,10 @@ model Student {
   transportAllotted Boolean @default(false)
   transportRoute    String?
   busNo             String?
+  // Months (e.g. ["Apr-2026","May-2026"]) the student uses transport. The route's
+  // monthly fee is billed per selected month via the fee ledger (computed live,
+  // like class fees — no stored fee rows).
+  transportMonths   Json?
 
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt

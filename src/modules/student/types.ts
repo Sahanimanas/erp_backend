@@ -58,6 +58,7 @@ export interface CreateStudentRequest {
   transportAllotted?: boolean;
   transportRoute?: string;
   busNo?: string;
+  transportMonths?: string[];
 }
 
 export interface UpdateStudentRequest {
@@ -113,6 +114,7 @@ export interface UpdateStudentRequest {
   transportAllotted?: boolean;
   transportRoute?: string;
   busNo?: string;
+  transportMonths?: string[];
 }
 
 export interface UploadStudentDocumentRequest {

@@ -51,6 +51,43 @@ export class PaymentsService {
     return { items, totals };
   }
 
+  // ── Transport fee ──────────────────────────────────────────────────────────
+  // A student's transport is billed exactly like a Monthly class fee: the route's
+  // monthly fee × the months the student is enrolled for transport. We model it
+  // as a synthetic "fee structure" so it flows through the SAME ledger /
+  // installment / dues / demand-bill code as class fees — no parallel logic.
+  // The synthetic feeTypeId is `TRANSPORT:<routeId>` so payments match by it.
+  private buildTransportStructure(route: any, months: any): any | null {
+    if (!route) return null;
+    const ms = Array.isArray(months) ? months.filter(Boolean) : [];
+    if (!ms.length) return null;
+    return {
+      feeTypeId: `TRANSPORT:${route.id}`,
+      amount: route.fee,
+      feeType: { name: `Transport (${route.name})`, frequency: 'Monthly', months: ms },
+    };
+  }
+
+  /** Resolve ONE student's transport structure (looks the route up by name). */
+  private async transportStructureForStudent(schoolId: string, student: any): Promise<any | null> {
+    if (!student?.transportAllotted || !student?.transportRoute) return null;
+    const route = await db.transportRoute.findFirst({ where: { schoolId, name: student.transportRoute, deletedAt: null } });
+    return this.buildTransportStructure(route, student.transportMonths);
+  }
+
+  /** Route lookup map (by name) for the batched per-class fee views. */
+  private async routeMapByName(schoolId: string): Promise<Map<string, any>> {
+    const routes = await db.transportRoute.findMany({ where: { schoolId, deletedAt: null } });
+    return new Map(routes.map((r) => [r.name, r]));
+  }
+
+  /** Append a student's transport structure to the shared class structures. */
+  private withTransport(structures: any[], routeMap: Map<string, any>, student: any): any[] {
+    if (!student?.transportAllotted || !student?.transportRoute) return structures;
+    const t = this.buildTransportStructure(routeMap.get(student.transportRoute), student.transportMonths);
+    return t ? [...structures, t] : structures;
+  }
+
   /**
    * The fee ledger for a student: every enabled fee type configured for their
    * class with expected / extra / discount / paid / due. Expected for Monthly
@@ -67,7 +104,9 @@ export class PaymentsService {
       db.feePayment.findMany({ where: { schoolId, studentId } }),
     ]);
 
-    const { items, totals } = this.computeLedger(structures, payments);
+    const tStruct = await this.transportStructureForStudent(schoolId, student);
+    const allStructures = tStruct ? [...structures, tStruct] : structures;
+    const { items, totals } = this.computeLedger(allStructures, payments);
 
     return {
       student: {
@@ -171,7 +210,9 @@ export class PaymentsService {
       db.feePayment.findMany({ where: { schoolId, studentId } }),
     ]);
 
-    const rows = this.buildInstallmentRows(structures, payments, (student as any).admissionDate);
+    const tStruct = await this.transportStructureForStudent(schoolId, student);
+    const allStructures = tStruct ? [...structures, tStruct] : structures;
+    const rows = this.buildInstallmentRows(allStructures, payments, (student as any).admissionDate);
     const totals = rows.reduce(
       (t, r) => ({ total: t.total + r.totalAmount, paid: t.paid + r.paid, discount: t.discount + r.discount, due: t.due + r.due }),
       { total: 0, paid: 0, discount: 0, due: 0 }
@@ -313,6 +354,7 @@ export class PaymentsService {
         where: { schoolId, deletedAt: null, section: { classId } },
         select: {
           id: true, rollNumber: true, registrationNo: true, fatherName: true,
+          transportAllotted: true, transportRoute: true, transportMonths: true,
           user: { select: { firstName: true, lastName: true, phone: true } },
           section: { select: { name: true, class: { select: { name: true } } } },
         },
@@ -333,9 +375,10 @@ export class PaymentsService {
       list.push(p);
       byStudent.set(p.studentId, list);
     }
+    const routeMap = await this.routeMapByName(schoolId);
 
     return students.map((s) => {
-      const { items, totals } = this.computeLedger(structures, byStudent.get(s.id) || []);
+      const { items, totals } = this.computeLedger(this.withTransport(structures, routeMap, s), byStudent.get(s.id) || []);
       return {
         studentId: s.id,
         rollNumber: s.rollNumber,
@@ -363,6 +406,7 @@ export class PaymentsService {
         where: { schoolId, deletedAt: null, section: { classId } },
         select: {
           id: true, rollNumber: true, registrationNo: true,
+          transportAllotted: true, transportRoute: true, transportMonths: true,
           user: { select: { firstName: true, lastName: true, phone: true } },
           section: { select: { name: true, class: { select: { name: true } } } },
         },
@@ -381,13 +425,15 @@ export class PaymentsService {
       list.push(p);
       byStudent.set(p.studentId, list);
     }
+    const routeMap = await this.routeMapByName(schoolId);
 
     const now = new Date();
     const curMonth = `${PaymentsService.MONTHS[now.getMonth()]}-${now.getFullYear()}`;
 
     return students.map((s) => {
       const pmts = byStudent.get(s.id) || [];
-      const { totals } = this.computeLedger(structures, pmts);
+      const allStructures = this.withTransport(structures, routeMap, s);
+      const { totals } = this.computeLedger(allStructures, pmts);
 
       // Last payment: latest receipt (grouped by receiptNo) by paid date.
       const recs = new Map<string, { total: number; date: Date }>();
@@ -412,7 +458,7 @@ export class PaymentsService {
           .reduce((acc, p) => acc + N((p as any)[field]), 0);
       let curApplicable = false;
       let curDue = 0;
-      for (const st of structures as any[]) {
+      for (const st of allStructures as any[]) {
         const ft = st.feeType;
         const monthLike = ['Monthly', 'Quarterly'].includes(ft.frequency) && ft.months.length;
         if (!monthLike || !ft.months.includes(curMonth)) continue;
@@ -459,6 +505,7 @@ export class PaymentsService {
         where: { schoolId, deletedAt: null, section: { classId } },
         select: {
           id: true, rollNumber: true, registrationNo: true, fatherName: true, admissionDate: true,
+          transportAllotted: true, transportRoute: true, transportMonths: true,
           user: { select: { firstName: true, lastName: true, phone: true } },
           section: { select: { name: true, class: { select: { name: true } } } },
         },
@@ -477,6 +524,7 @@ export class PaymentsService {
       list.push(p);
       byStudent.set(p.studentId, list);
     }
+    const routeMap = await this.routeMapByName(schoolId);
 
     // Window for the selected month [monthStart, monthEnd]. A row is "current"
     // if its installment month matches the selection, or (for monthless fees)
@@ -486,7 +534,7 @@ export class PaymentsService {
     const monthEnd = md ? new Date(md.getFullYear(), md.getMonth() + 1, 0, 23, 59, 59, 999) : null;
 
     return students.map((s) => {
-      const rows = this.buildInstallmentRows(structures, byStudent.get(s.id) || [], (s as any).admissionDate);
+      const rows = this.buildInstallmentRows(this.withTransport(structures, routeMap, s), byStudent.get(s.id) || [], (s as any).admissionDate);
       let previousDue = 0;
       let currentDue = 0;
       const lines: { name: string; month: string; amount: number }[] = [];

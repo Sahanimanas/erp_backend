@@ -149,6 +149,7 @@ export class StudentService {
           transportAllotted: data.transportAllotted ?? false,
           transportRoute: data.transportRoute,
           busNo: data.busNo,
+          transportMonths: Array.isArray(data.transportMonths) ? data.transportMonths : undefined,
         },
         include: {
           user: {
@@ -215,6 +216,7 @@ export class StudentService {
       'guardianName', 'guardianPhone', 'guardianEmail',
       'address', 'permanentAddress', 'city', 'pincode',
       'hostelAllotted', 'hostelName', 'hostelRoomNo', 'transportAllotted', 'transportRoute', 'busNo',
+      'transportMonths',
     ];
     const updateData: any = {};
     for (const k of STUDENT_COLS) {
