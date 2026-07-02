@@ -362,6 +362,7 @@ model AcademicYear {
 
   school  School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   classes Class[]
+  feeStructures ClassFeeStructure[]
 
   @@unique([schoolId, name])
   @@index([schoolId])
@@ -1003,16 +1004,21 @@ model ClassFeeStructure {
   schoolId  String
   classId   String
   feeTypeId String
+  // Academic session (year) this amount applies to. Null = legacy/all-session
+  // fallback. Lets the same class carry different fees per session.
+  academicYearId String?
   amount    BigInt   @default(0)
   enabled   Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  feeType ClassFeeType @relation(fields: [feeTypeId], references: [id], onDelete: Cascade)
+  feeType      ClassFeeType  @relation(fields: [feeTypeId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear? @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
 
-  @@unique([classId, feeTypeId])
+  @@unique([classId, feeTypeId, academicYearId])
   @@index([schoolId])
   @@index([classId])
+  @@index([academicYearId])
 }
 
 model TransportRoute {
