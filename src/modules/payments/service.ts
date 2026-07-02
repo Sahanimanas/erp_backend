@@ -75,6 +75,29 @@ export class PaymentsService {
     return this.buildTransportStructure(route, student.transportMonths);
   }
 
+  /**
+   * Enabled class fee structures for the ledger, deduped to ONE row per fee type.
+   * Now that a class can carry different amounts per session (academicYearId), a
+   * plain classId fetch could return several rows for the same fee type and
+   * double-count. We keep a single row per fee type, preferring the school's
+   * ACTIVE session, then a legacy null-session row, then any other.
+   */
+  private async fetchClassStructures(schoolId: string, classId?: string): Promise<any[]> {
+    if (!classId) return [];
+    const [rows, activeYear] = await Promise.all([
+      db.classFeeStructure.findMany({ where: { schoolId, classId, enabled: true, feeType: { deletedAt: null } }, include: { feeType: true } }),
+      db.academicYear.findFirst({ where: { schoolId, isActive: true }, select: { id: true } }),
+    ]);
+    const activeId = activeYear?.id ?? null;
+    const rank = (r: any) => (r.academicYearId === activeId ? 0 : r.academicYearId === null ? 1 : 2);
+    const byType = new Map<string, any>();
+    for (const r of rows) {
+      const prev = byType.get(r.feeTypeId);
+      if (!prev || rank(r) < rank(prev)) byType.set(r.feeTypeId, r);
+    }
+    return Array.from(byType.values());
+  }
+
   /** Route lookup map (by name) for the batched per-class fee views. */
   private async routeMapByName(schoolId: string): Promise<Map<string, any>> {
     const routes = await db.transportRoute.findMany({ where: { schoolId, deletedAt: null } });
@@ -98,9 +121,7 @@ export class PaymentsService {
     const classId = student.sectionId ? student.section?.classId : undefined;
 
     const [structures, payments] = await Promise.all([
-      classId
-        ? db.classFeeStructure.findMany({ where: { schoolId, classId, enabled: true, feeType: { deletedAt: null } }, include: { feeType: true } })
-        : Promise.resolve([]),
+      this.fetchClassStructures(schoolId, classId),
       db.feePayment.findMany({ where: { schoolId, studentId } }),
     ]);
 
@@ -204,9 +225,7 @@ export class PaymentsService {
     const student = await this.studentWithClass(schoolId, studentId);
     const classId = student.section?.classId;
     const [structures, payments] = await Promise.all([
-      classId
-        ? db.classFeeStructure.findMany({ where: { schoolId, classId, enabled: true, feeType: { deletedAt: null } }, include: { feeType: true } })
-        : Promise.resolve([]),
+      this.fetchClassStructures(schoolId, classId),
       db.feePayment.findMany({ where: { schoolId, studentId } }),
     ]);
 
@@ -360,7 +379,7 @@ export class PaymentsService {
         },
         orderBy: { rollNumber: 'asc' },
       }),
-      db.classFeeStructure.findMany({ where: { schoolId, classId, enabled: true, feeType: { deletedAt: null } }, include: { feeType: true } }),
+      this.fetchClassStructures(schoolId, classId),
     ]);
 
     const studentIds = students.map((s) => s.id);
@@ -412,7 +431,7 @@ export class PaymentsService {
         },
         orderBy: { rollNumber: 'asc' },
       }),
-      db.classFeeStructure.findMany({ where: { schoolId, classId, enabled: true, feeType: { deletedAt: null } }, include: { feeType: true } }),
+      this.fetchClassStructures(schoolId, classId),
     ]);
 
     const studentIds = students.map((s) => s.id);
@@ -511,7 +530,7 @@ export class PaymentsService {
         },
         orderBy: { rollNumber: 'asc' },
       }),
-      db.classFeeStructure.findMany({ where: { schoolId, classId, enabled: true, feeType: { deletedAt: null } }, include: { feeType: true } }),
+      this.fetchClassStructures(schoolId, classId),
     ]);
 
     const studentIds = students.map((s) => s.id);

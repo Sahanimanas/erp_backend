@@ -76,8 +76,20 @@ export class DashboardService {
       const cid = s.section?.classId;
       if (cid) studentsPerClass[cid] = (studentsPerClass[cid] || 0) + 1;
     }
-    let structureDemand = 0;
+    // A class can now carry per-session fee rows (academicYearId). Keep just one
+    // row per (class, fee type) — preferring the active session, then a legacy
+    // null-session row — so demand isn't multiplied across sessions.
+    const activeYear = await db.academicYear.findFirst({ where: { schoolId, isActive: true }, select: { id: true } });
+    const activeYearId = activeYear?.id ?? null;
+    const rankStruct = (r: any) => (r.academicYearId === activeYearId ? 0 : r.academicYearId === null ? 1 : 2);
+    const structByKey = new Map<string, any>();
     for (const st of structures as any[]) {
+      const key = `${st.classId}:${st.feeTypeId}`;
+      const prev = structByKey.get(key);
+      if (!prev || rankStruct(st) < rankStruct(prev)) structByKey.set(key, st);
+    }
+    let structureDemand = 0;
+    for (const st of structByKey.values()) {
       const m = ['Monthly', 'Quarterly'].includes(st.feeType.frequency) ? Math.max(1, st.feeType.months.length) : 1;
       structureDemand += N(st.amount) * m * (studentsPerClass[st.classId] || 0);
     }
