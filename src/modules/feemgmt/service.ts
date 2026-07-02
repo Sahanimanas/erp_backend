@@ -61,13 +61,22 @@ export class FeeMgmtService {
    * currently configured for that class (0/false when not yet set). Drives both
    * "Manage Class Fee" (editable) and "Class Fee Structure" (read-only) screens.
    */
-  async getClassStructure(schoolId: string, classId: string, includeTransport = false) {
+  async getClassStructure(schoolId: string, classId: string, includeTransport = false, academicYearId?: string) {
     const where: any = { schoolId, deletedAt: null };
     if (!includeTransport) where.isTransport = false;
+    // Scope amounts to the selected session. When a session is given, only that
+    // session's rows are returned (others come back as 0/disabled), so switching
+    // sessions no longer shows another session's values. Null-session (legacy)
+    // rows are included as a fallback when no session-specific row exists.
+    const structWhere: any = { schoolId, classId };
+    if (academicYearId) structWhere.academicYearId = { in: [academicYearId, null] };
     const [types, structures] = await Promise.all([
       db.classFeeType.findMany({ where, orderBy: { createdAt: 'asc' } }),
-      db.classFeeStructure.findMany({ where: { schoolId, classId } }),
+      db.classFeeStructure.findMany({ where: structWhere }),
     ]);
+    // The map below keeps the LAST row per feeTypeId, so order the exact-session
+    // row last to prefer it over the legacy null-session fallback.
+    structures.sort((a, b) => (a.academicYearId === academicYearId ? 1 : -1));
     const byType = new Map(structures.map((s) => [s.feeTypeId, s]));
     return types.map((t) => {
       const s = byType.get(t.id);
@@ -84,19 +93,21 @@ export class FeeMgmtService {
     });
   }
 
-  async saveClassStructure(schoolId: string, classId: string, items: any[]) {
+  async saveClassStructure(schoolId: string, classId: string, items: any[], academicYearId?: string) {
     if (!classId) throw new Error('classId is required');
     if (!Array.isArray(items)) throw new Error('items[] required');
+    const sessionId = academicYearId || null;
     let saved = 0;
     for (const it of items) {
       if (!it.feeTypeId) continue;
       const amount = BigInt(Math.round(Number(it.amount) || 0));
       const enabled = !!it.enabled;
-      const existing = await db.classFeeStructure.findFirst({ where: { classId, feeTypeId: it.feeTypeId } });
+      // Upsert scoped to the selected session so each session keeps its own row.
+      const existing = await db.classFeeStructure.findFirst({ where: { classId, feeTypeId: it.feeTypeId, academicYearId: sessionId } });
       if (existing) {
         await db.classFeeStructure.update({ where: { id: existing.id }, data: { amount, enabled } });
       } else {
-        await db.classFeeStructure.create({ data: { schoolId, classId, feeTypeId: it.feeTypeId, amount, enabled } });
+        await db.classFeeStructure.create({ data: { schoolId, classId, feeTypeId: it.feeTypeId, academicYearId: sessionId, amount, enabled } });
       }
       saved++;
     }

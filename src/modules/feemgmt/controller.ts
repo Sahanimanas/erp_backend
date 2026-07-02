@@ -42,18 +42,18 @@ export class FeeMgmtController {
 
   async getClassStructure(req: Request, res: Response): Promise<void> {
     try {
-      const { classId } = req.query;
+      const { classId, academicYearId } = req.query;
       if (!classId) return void errorResponse(res, 400, 'classId is required');
       const includeTransport = req.query.includeTransport === 'true';
-      const data = await feeMgmtService.getClassStructure(req.user!.schoolId, classId as string, includeTransport);
+      const data = await feeMgmtService.getClassStructure(req.user!.schoolId, classId as string, includeTransport, academicYearId as string | undefined);
       successResponse(res, 200, data);
     } catch (e: any) { errorResponse(res, codeFor(e), e.message); }
   }
 
   async saveClassStructure(req: Request, res: Response): Promise<void> {
     try {
-      const { classId, items } = req.body;
-      const data = await feeMgmtService.saveClassStructure(req.user!.schoolId, classId, items);
+      const { classId, items, academicYearId } = req.body;
+      const data = await feeMgmtService.saveClassStructure(req.user!.schoolId, classId, items, academicYearId);
       successResponse(res, 200, data, `Saved ${data.saved} fee row(s)`);
     } catch (e: any) { errorResponse(res, codeFor(e), e.message); }
   }
