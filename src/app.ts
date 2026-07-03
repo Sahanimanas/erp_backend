@@ -20,6 +20,14 @@ import { authenticate, requireAuth } from '@common/middleware/auth';
 
 const app = express();
 
+// Behind Render/Cloudflare, the client connects to the proxy, not to us — so
+// the raw socket IP is the proxy's IP (same for every user). Trust ONE proxy
+// hop so req.ip is read from X-Forwarded-For (the real client IP). Without
+// this, express-rate-limit buckets all users together and 429s everyone.
+// NOTE: use a number, not `true` — `true` makes X-Forwarded-For spoofable and
+// express-rate-limit rejects it (ERR_ERL_PERMISSIVE_TRUST_PROXY).
+app.set('trust proxy', 1);
+
 // ─────────────────────────────────────────────────────────────────────────
 // SECURITY MIDDLEWARE
 // ─────────────────────────────────────────────────────────────────────────
