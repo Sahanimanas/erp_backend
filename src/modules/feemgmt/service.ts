@@ -69,7 +69,8 @@ export class FeeMgmtService {
     // sessions no longer shows another session's values. Null-session (legacy)
     // rows are included as a fallback when no session-specific row exists.
     const structWhere: any = { schoolId, classId };
-    if (academicYearId) structWhere.academicYearId = { in: [academicYearId, null] };
+    // Prisma's `in` does not accept null — use OR to include legacy rows.
+    if (academicYearId) structWhere.OR = [{ academicYearId }, { academicYearId: null }];
     const [types, structures] = await Promise.all([
       db.classFeeType.findMany({ where, orderBy: { createdAt: 'asc' } }),
       db.classFeeStructure.findMany({ where: structWhere }),
