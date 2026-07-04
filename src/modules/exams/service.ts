@@ -5,15 +5,23 @@ export class ExamsService {
   /**
    * Create exam
    */
-  async createExam(schoolId: string, data: CreateExamRequest) {
+  async createExam(schoolId: string, data: CreateExamRequest & { academicYearId?: string }) {
     const { name } = data;
 
+    // Exams are session-scoped: default to the school's active session so the
+    // same exam name can repeat across years.
+    let academicYearId = data.academicYearId ?? null;
+    if (!academicYearId) {
+      const active = await db.academicYear.findFirst({ where: { schoolId, isActive: true }, select: { id: true } });
+      academicYearId = active?.id ?? null;
+    }
+
     const existing = await db.exam.findFirst({
-      where: { schoolId, name },
+      where: { schoolId, name, academicYearId, deletedAt: null },
     });
 
     if (existing) {
-      throw new Error('Exam with this name already exists');
+      throw new Error('Exam with this name already exists in this session');
     }
 
     // Coerce date-only strings (from <input type="date">) to Date for Prisma.
@@ -26,6 +34,7 @@ export class ExamsService {
     const exam = await db.exam.create({
       data: {
         schoolId,
+        academicYearId,
         name,
         type: data.type,
         startDate,
@@ -36,18 +45,43 @@ export class ExamsService {
     return exam;
   }
 
+  async updateExam(schoolId: string, examId: string, data: any) {
+    const exam = await db.exam.findFirst({ where: { id: examId, schoolId, deletedAt: null } });
+    if (!exam) throw new Error('Exam not found');
+
+    const patch: any = {};
+    if (data.name) patch.name = data.name;
+    if (data.type) patch.type = data.type;
+    if (data.status) patch.status = data.status;
+    if (data.academicYearId !== undefined) patch.academicYearId = data.academicYearId || null;
+    if (data.startDate) {
+      const d = new Date(data.startDate);
+      if (!isNaN(d.getTime())) patch.startDate = d;
+    }
+    if (data.endDate) {
+      const d = new Date(data.endDate);
+      if (!isNaN(d.getTime())) patch.endDate = d;
+    }
+    return db.exam.update({ where: { id: examId }, data: patch });
+  }
+
   /**
    * List exams
    */
-  async listExams(schoolId: string, page: number = 1, limit: number = 10) {
+  async listExams(schoolId: string, page: number = 1, limit: number = 10, academicYearId?: string) {
     const skip = (page - 1) * limit;
+
+    const where: any = { schoolId, deletedAt: null };
+    // Session filter; legacy null-session exams are included as a fallback.
+    if (academicYearId) where.OR = [{ academicYearId }, { academicYearId: null }];
 
     const [exams, total] = await Promise.all([
       db.exam.findMany({
-        where: { schoolId },
+        where,
         skip,
         take: limit,
         include: {
+          academicYear: { select: { id: true, name: true } },
           subjects: {
             select: {
               id: true,
@@ -63,10 +97,11 @@ export class ExamsService {
               id: true,
             },
           },
+          _count: { select: { schedules: true, seats: true } },
         },
         orderBy: { startDate: 'desc' },
       }),
-      db.exam.count({ where: { schoolId } }),
+      db.exam.count({ where }),
     ]);
 
     return {
@@ -304,7 +339,7 @@ export class ExamsService {
     });
 
     const percentage = totalMarks === 0 ? 0 : Math.round((obtainedMarks / totalMarks) * 100);
-    const grade = this.calculateGrade(percentage);
+    const grade = await this.gradeForPercentage(schoolId, percentage);
 
     return {
       studentId,
@@ -356,6 +391,19 @@ export class ExamsService {
     });
 
     return results;
+  }
+
+  /**
+   * Grade for a percentage using the school's configured grading scale
+   * (Setup Exam Grading); falls back to the built-in bands when none is set.
+   */
+  async gradeForPercentage(schoolId: string, percentage: number): Promise<string> {
+    const scale = await db.gradingScale.findMany({ where: { schoolId }, orderBy: { minPercent: 'desc' } });
+    if (scale.length) {
+      const band = scale.find((g) => percentage >= g.minPercent && percentage <= g.maxPercent);
+      return band?.grade ?? scale[scale.length - 1].grade;
+    }
+    return this.calculateGrade(percentage);
   }
 
   /**

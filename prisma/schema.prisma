@@ -363,6 +363,7 @@ model AcademicYear {
   school  School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   classes Class[]
   feeStructures ClassFeeStructure[]
+  exams   Exam[]
 
   @@unique([schoolId, name])
   @@index([schoolId])
@@ -384,6 +385,7 @@ model Class {
   academicYear AcademicYear  @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
   sections     Section[]
   classSubjects ClassSubject[]
+  examSchedules ExamSchedule[]
 
   @@unique([schoolId, name])
   @@index([schoolId])
@@ -423,6 +425,7 @@ model Subject {
   classSubjects ClassSubject[]
   studentMarks  StudentMark[]
   examSubjects  ExamSubject[]
+  examSchedules ExamSchedule[]
 
   @@unique([schoolId, code])
   @@index([schoolId])
@@ -523,6 +526,8 @@ model Student {
   attendance  StudentAttendance[]
   fees        FeeCollection[]
   marks       StudentMark[]
+  examSeats      ExamSeat[]
+  examAttendance ExamAttendance[]
   documents   StudentDocument[]
   biometricEnrollments BiometricEnrollment[]
   attendancePunches    AttendancePunch[]
@@ -1086,23 +1091,126 @@ model LateFeeRule {
 // ─────────────────────────────────────────────────────────────────────────
 
 model Exam {
+  id             String   @id @default(cuid())
+  schoolId       String
+  academicYearId String?            // session the exam belongs to (null = legacy rows)
+  name           String
+  type           ExamType
+  status         String   @default("draft") // draft | published | closed
+  startDate      DateTime
+  endDate        DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  deletedAt      DateTime?
+
+  school       School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear?  @relation(fields: [academicYearId], references: [id], onDelete: SetNull)
+  subjects  ExamSubject[]
+  marks     StudentMark[]
+  schedules ExamSchedule[]
+  seats     ExamSeat[]
+
+  @@unique([schoolId, academicYearId, name])
+  @@index([schoolId])
+  @@index([academicYearId])
+  @@index([type])
+}
+
+// One row per exam × class × subject: when/where the paper happens.
+model ExamSchedule {
+  id        String   @id @default(cuid())
+  schoolId  String
+  examId    String
+  classId   String
+  subjectId String
+  examDate  DateTime
+  startTime String   @default("09:00")
+  endTime   String   @default("12:00")
+  room      String?
+  maxMarks  Int      @default(100)
+  minMarks  Int      @default(33)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  exam       Exam             @relation(fields: [examId], references: [id], onDelete: Cascade)
+  class      Class            @relation(fields: [classId], references: [id], onDelete: Cascade)
+  subject    Subject          @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  attendance ExamAttendance[]
+
+  @@unique([examId, classId, subjectId])
+  @@index([schoolId])
+  @@index([examId])
+  @@index([classId])
+}
+
+model ExamHall {
   id        String   @id @default(cuid())
   schoolId  String
   name      String
-  type      ExamType
-  startDate DateTime
-  endDate   DateTime
+  roomNo    String?
+  capacity  Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   deletedAt DateTime?
 
-  school  School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  subjects ExamSubject[]
-  marks   StudentMark[]
+  seats ExamSeat[]
 
   @@unique([schoolId, name])
   @@index([schoolId])
-  @@index([type])
+}
+
+// Seat allocation for an exam (sitting plan / hall ticket / hall plan).
+model ExamSeat {
+  id        String   @id @default(cuid())
+  schoolId  String
+  examId    String
+  hallId    String
+  studentId String
+  seatNo    String
+  createdAt DateTime @default(now())
+
+  exam    Exam     @relation(fields: [examId], references: [id], onDelete: Cascade)
+  hall    ExamHall @relation(fields: [hallId], references: [id], onDelete: Cascade)
+  student Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([examId, studentId])
+  @@index([schoolId])
+  @@index([examId, hallId])
+}
+
+// School-wide grade bands (Setup Exam Grading); used to grade exam results.
+model GradingScale {
+  id         String   @id @default(cuid())
+  schoolId   String
+  grade      String
+  minPercent Int
+  maxPercent Int
+  gradePoint Float?
+  remarks    String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([schoolId, grade])
+  @@index([schoolId])
+}
+
+// Per-paper attendance (exam schedule row × student).
+model ExamAttendance {
+  id         String   @id @default(cuid())
+  schoolId   String
+  scheduleId String
+  studentId  String
+  status     String   @default("PRESENT") // PRESENT | ABSENT
+  remarks    String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  schedule ExamSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  student  Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([scheduleId, studentId])
+  @@index([schoolId])
+  @@index([scheduleId])
 }
 
 model ExamSubject {

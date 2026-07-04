@@ -29,7 +29,8 @@ export class ExamsController {
         return void errorResponse(res, 400, 'School ID required');
       }
 
-      const result = await examsService.listExams(schoolId, page, limit);
+      const academicYearId = (req.query.academicYearId as string) || undefined;
+      const result = await examsService.listExams(schoolId, page, limit, academicYearId);
       paginatedResponse(res, result.data, page, limit, result.pagination.total);
     } catch (error: any) {
       errorResponse(res, 400, error.message || 'Failed to list exams');
@@ -158,6 +159,23 @@ export class ExamsController {
     } catch (error: any) {
       const statusCode = error.message.includes('not found') ? 404 : 400;
       errorResponse(res, statusCode, error.message || 'Failed to fetch performance');
+    }
+  }
+
+  async updateExam(req: Request, res: Response): Promise<void> {
+    try {
+      const schoolId = req.user?.schoolId;
+      const { examId } = req.params;
+
+      if (!schoolId || !examId) {
+        return void errorResponse(res, 400, 'Required fields missing');
+      }
+
+      const exam = await examsService.updateExam(schoolId, examId, req.body);
+      successResponse(res, 200, exam, 'Exam updated successfully');
+    } catch (error: any) {
+      const statusCode = error.message.includes('not found') ? 404 : 400;
+      errorResponse(res, statusCode, error.message || 'Failed to update exam');
     }
   }
 
