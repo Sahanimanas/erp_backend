@@ -82,13 +82,14 @@ export class PaymentsService {
    * double-count. We keep a single row per fee type, preferring the school's
    * ACTIVE session, then a legacy null-session row, then any other.
    */
-  private async fetchClassStructures(schoolId: string, classId?: string): Promise<any[]> {
+  private async fetchClassStructures(schoolId: string, classId?: string, academicYearId?: string): Promise<any[]> {
     if (!classId) return [];
     const [rows, activeYear] = await Promise.all([
       db.classFeeStructure.findMany({ where: { schoolId, classId, enabled: true, feeType: { deletedAt: null } }, include: { feeType: true } }),
       db.academicYear.findFirst({ where: { schoolId, isActive: true }, select: { id: true } }),
     ]);
-    const activeId = activeYear?.id ?? null;
+    // Prefer the requested session's rows; default to the active session.
+    const activeId = academicYearId ?? activeYear?.id ?? null;
     const rank = (r: any) => (r.academicYearId === activeId ? 0 : r.academicYearId === null ? 1 : 2);
     const byType = new Map<string, any>();
     for (const r of rows) {
@@ -412,6 +413,49 @@ export class PaymentsService {
         ...Object.fromEntries(items.map((i) => [i.name, i.due])),
       };
     });
+  }
+
+  /**
+   * Class-wise fee totals for the whole school: per class, the summed
+   * expected / collected / pending across its students (same ledger math as
+   * the per-student views). `academicYearId` picks which session's fee
+   * structure drives the expected amounts.
+   */
+  async classFeeSummary(schoolId: string, academicYearId?: string) {
+    const [classes, students, payments, routeMap] = await Promise.all([
+      db.class.findMany({ where: { schoolId, deletedAt: null }, select: { id: true, name: true } }),
+      db.student.findMany({
+        where: { schoolId, deletedAt: null },
+        select: {
+          id: true, transportAllotted: true, transportRoute: true, transportMonths: true,
+          section: { select: { classId: true } },
+        },
+      }),
+      db.feePayment.findMany({ where: { schoolId } }),
+      this.routeMapByName(schoolId),
+    ]);
+
+    const byStudent = new Map<string, any[]>();
+    for (const p of payments) {
+      const list = byStudent.get(p.studentId) || [];
+      list.push(p);
+      byStudent.set(p.studentId, list);
+    }
+
+    const rows = [];
+    for (const cls of classes) {
+      const clsStudents = students.filter((s) => s.section?.classId === cls.id);
+      const structures = await this.fetchClassStructures(schoolId, cls.id, academicYearId);
+      let total = 0, collected = 0, pending = 0;
+      for (const s of clsStudents) {
+        const { totals } = this.computeLedger(this.withTransport(structures, routeMap, s), byStudent.get(s.id) || []);
+        total += totals.expected;
+        collected += totals.paid;
+        pending += totals.due;
+      }
+      rows.push({ classId: cls.id, className: cls.name, students: clsStudents.length, total, collected, pending });
+    }
+    return rows;
   }
 
   /**

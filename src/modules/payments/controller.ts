@@ -63,6 +63,14 @@ export class PaymentsController {
     } catch (e: any) { errorResponse(res, codeFor(e), e.message); }
   }
 
+  async classSummary(req: Request, res: Response): Promise<void> {
+    try {
+      const { academicYearId } = req.query;
+      const data = await paymentsService.classFeeSummary(req.user!.schoolId, academicYearId as string | undefined);
+      successResponse(res, 200, data);
+    } catch (e: any) { errorResponse(res, codeFor(e), e.message); }
+  }
+
   async monthlyDues(req: Request, res: Response): Promise<void> {
     try {
       const { classId, month } = req.query;

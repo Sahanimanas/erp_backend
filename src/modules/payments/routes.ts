@@ -11,6 +11,9 @@ router.get('/export', requireAuth, (req, res) => paymentsController.exportClass(
 // Per-class student fee-details summary (last payment, totals, current-month status)
 router.get('/fee-details', requireAuth, (req, res) => paymentsController.feeDetails(req, res));
 
+// Class-wise fee totals (total / collected / pending per class, session-scoped)
+router.get('/class-summary', requireAuth, (req, res) => paymentsController.classSummary(req, res));
+
 // Per-class month-scoped dues (previous vs current month), for Monthly Fee
 // Payment + Demand Receipt. Declared before /:studentId routes.
 router.get('/monthly-dues', requireAuth, (req, res) => paymentsController.monthlyDues(req, res));
