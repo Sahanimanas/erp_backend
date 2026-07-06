@@ -75,12 +75,13 @@ export class StudentController {
       const classId = req.query.classId as string | undefined;
       const admissionFrom = req.query.admissionFrom as string | undefined;
       const admissionTo = req.query.admissionTo as string | undefined;
+      const fatherName = req.query.fatherName as string | undefined;
 
       if (!schoolId) {
         return void errorResponse(res, 400, 'School ID required');
       }
 
-      const result = await studentService.listStudents(schoolId, page, limit, sectionId, search, classId, admissionFrom, admissionTo);
+      const result = await studentService.listStudents(schoolId, page, limit, sectionId, search, classId, admissionFrom, admissionTo, fatherName);
       paginatedResponse(res, result.data, page, limit, result.pagination.total);
     } catch (error: any) {
       errorResponse(res, 400, error.message || 'Failed to list students');

@@ -326,7 +326,8 @@ export class StudentService {
     search?: string,
     classId?: string,
     admissionFrom?: string,
-    admissionTo?: string
+    admissionTo?: string,
+    fatherName?: string
   ) {
     const skip = (page - 1) * limit;
     const where: any = { schoolId, deletedAt: null };
@@ -334,6 +335,8 @@ export class StudentService {
     if (sectionId) where.sectionId = sectionId;
     // Filter by class via the section relation.
     if (classId && !sectionId) where.section = { classId };
+    // Dedicated father-name filter — ANDs with the free-text search.
+    if (fatherName) where.fatherName = { contains: fatherName, mode: 'insensitive' };
 
     if (search) {
       where.OR = [
