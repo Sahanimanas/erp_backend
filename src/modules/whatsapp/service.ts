@@ -12,6 +12,7 @@ import makeWASocket, {
   type AnyMessageContent,
 } from '@whiskeysockets/baileys';
 import { config } from '@config/environment';
+import { db } from '@common/database/client';
 import { SendMediaRequest, SessionStatus, WhatsAppSessionState } from './types';
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -75,8 +76,32 @@ class WhatsAppService {
     return this.getStatus(schoolId);
   }
 
+  /** Persist / clear the linked number on the school row (non-fatal). */
+  private async persistNumber(schoolId: string, number: string | null): Promise<void> {
+    try {
+      await db.school.update({
+        where: { id: schoolId },
+        data: { whatsappNumber: number, whatsappLinkedAt: number ? new Date() : null },
+      });
+    } catch {
+      /* the link still works without the persisted copy */
+    }
+  }
+
   private async startSocket(schoolId: string): Promise<void> {
     const session = this.getOrInit(schoolId);
+
+    // Never let two live sockets share the same credentials — WhatsApp treats
+    // that as a device conflict and eventually logs the number out (which is
+    // how a "refresh + relink" used to wipe the link). Tear down the old one.
+    const previous = session.sock;
+    if (previous) {
+      session.sock = undefined;
+      try { previous.ev.removeAllListeners('connection.update'); } catch { /* ignore */ }
+      try { previous.ev.removeAllListeners('creds.update'); } catch { /* ignore */ }
+      try { previous.end(undefined as any); } catch { /* ignore */ }
+    }
+
     session.starting = true;
     session.status = 'connecting';
     session.lastError = undefined;
@@ -104,6 +129,10 @@ class WhatsAppService {
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', async (update) => {
+      // A replaced socket may still emit while dying — only the current
+      // socket may drive the session state (prevents reconnect storms).
+      if (session.sock !== sock) return;
+
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
@@ -120,6 +149,8 @@ class WhatsAppService {
         session.qr = undefined;
         session.lastError = undefined;
         session.number = sock.user?.id?.split(':')[0]?.split('@')[0];
+        // Remember the linked number across restarts/refreshes.
+        void this.persistNumber(schoolId, session.number ?? null);
       }
 
       if (connection === 'close') {
@@ -128,9 +159,11 @@ class WhatsAppService {
         session.qr = undefined;
 
         if (loggedOut) {
-          // Credentials are dead — wipe them so the next connect shows a fresh QR.
+          // Credentials are dead — wipe them so the next connect shows a fresh
+          // QR. The persisted number is kept so the UI can say WHICH number
+          // needs relinking; it is only cleared on an explicit disconnect.
           session.status = 'disconnected';
-          session.lastError = 'Logged out';
+          session.lastError = 'Logged out by WhatsApp — scan the QR to link again';
           session.number = undefined;
           session.sock = undefined;
           this.clearAuthDir(schoolId);
@@ -153,6 +186,9 @@ class WhatsAppService {
    */
   async requestPairingCode(schoolId: string, number: string): Promise<string> {
     const session = this.getOrInit(schoolId);
+    if (session.status === 'connected') {
+      throw new Error('A number is already linked — disconnect it first');
+    }
     if (!session.sock || (session.status !== 'connecting' && session.status !== 'qr')) {
       await this.startSocket(schoolId);
     }
@@ -163,13 +199,34 @@ class WhatsAppService {
     return sock.requestPairingCode(digits);
   }
 
-  getStatus(schoolId: string): WhatsAppSessionState {
-    const session = this.sessions.get(schoolId);
-    if (!session) return { status: 'disconnected' };
+  async getStatus(schoolId: string): Promise<WhatsAppSessionState> {
+    let session = this.sessions.get(schoolId);
+
+    // After a server restart the in-memory map is empty even though the
+    // linked credentials are still on disk. Resume the socket transparently
+    // so a page refresh shows "connecting → connected" instead of looking
+    // like a logout (which used to push users into relinking and conflicts).
+    const idle = !session || (session.status === 'disconnected' && !session.starting);
+    if (idle && this.hasSavedCreds(schoolId)) {
+      this.startSocket(schoolId).catch(() => { /* reported via lastError */ });
+      session = this.sessions.get(schoolId);
+    }
+
+    // The persisted number lets the UI keep showing which number is linked
+    // even while the socket is still resuming.
+    let persistedNumber: string | undefined;
+    try {
+      const school = await db.school.findUnique({ where: { id: schoolId }, select: { whatsappNumber: true } });
+      persistedNumber = school?.whatsappNumber ?? undefined;
+    } catch {
+      /* ignore — live session state still works */
+    }
+
+    if (!session) return { status: 'disconnected', number: persistedNumber };
     return {
       status: session.status,
       qr: session.qr,
-      number: session.number,
+      number: session.number ?? persistedNumber,
       lastError: session.lastError,
     };
   }
@@ -184,6 +241,8 @@ class WhatsAppService {
     }
     this.clearAuthDir(schoolId);
     this.sessions.delete(schoolId);
+    // Explicit disconnect: forget the number too.
+    await this.persistNumber(schoolId, null);
   }
 
   // ── Sending ──────────────────────────────────────────────────────────────

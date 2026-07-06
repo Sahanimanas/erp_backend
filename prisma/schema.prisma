@@ -121,6 +121,10 @@ model School {
   // Per-tenant feature/module control (toggled by the Super Admin). Empty = all
   // modules enabled. Values mirror the keys in src/common/constants/modules.ts.
   enabledModules     String[]               @default([])
+  // Linked WhatsApp number (Baileys). Persisted so the link survives server
+  // restarts and page refreshes; cleared only on explicit disconnect.
+  whatsappNumber     String?
+  whatsappLinkedAt   DateTime?
   createdAt          DateTime               @default(now())
   updatedAt          DateTime               @updatedAt
   deletedAt          DateTime?

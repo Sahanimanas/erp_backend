@@ -23,7 +23,7 @@ export class WhatsAppController {
       const schoolId = req.user?.schoolId;
       if (!schoolId) return void errorResponse(res, 400, 'Authentication required');
 
-      successResponse(res, 200, whatsappService.getStatus(schoolId));
+      successResponse(res, 200, await whatsappService.getStatus(schoolId));
     } catch (error: any) {
       errorResponse(res, 400, error.message || 'Failed to fetch status');
     }
