@@ -10,6 +10,9 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
+    // "node" (node10) is what ts-node + this CommonJS codebase need; node16
+    // would reject the ESM-only baileys import. Newer editor TS may flag it
+    // as deprecated — the project pins its own TS via .vscode/settings.json.
     "moduleResolution": "node",
     "declaration": true,
     "declarationMap": true,
@@ -19,8 +22,7 @@
       "@/*": ["src/*"],
       "@modules/*": ["src/modules/*"],
       "@common/*": ["src/common/*"],
-      "@config/*": ["src/config/*"],
-      "@types/*": ["src/types/*"]
+      "@config/*": ["src/config/*"]
     }
   },
   "include": ["src/**/*"],
