@@ -62,12 +62,14 @@ export class WhatsAppController {
     try {
       const schoolId = req.user?.schoolId;
       const { to, message } = req.body;
+      
       if (!schoolId) return void errorResponse(res, 400, 'Authentication required');
       if (!to || !message) return void errorResponse(res, 400, '"to" and "message" are required');
 
       const messageId = await whatsappService.sendText(schoolId, to, message);
       successResponse(res, 200, { to, messageId }, 'Message sent');
     } catch (error: any) {
+      // console.error('Error sending WhatsApp message:', error);
       errorResponse(res, 400, error.message || 'Failed to send message');
     }
   }

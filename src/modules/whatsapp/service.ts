@@ -251,17 +251,49 @@ class WhatsAppService {
     return results;
   }
 
+  /** Whether linked credentials for this school exist on disk. */
+  private hasSavedCreds(schoolId: string): boolean {
+    return fs.existsSync(path.join(this.sessionDir(schoolId), 'creds.json'));
+  }
+
+  /**
+   * Make sure the school's socket is live before sending. Sessions are held in
+   * memory, so after a server restart the map is empty even though the linked
+   * number's credentials are still on disk — restore the socket from them and
+   * wait (bounded) for it to come up instead of failing the send.
+   */
+  private async ensureConnected(schoolId: string, timeoutMs = 20000): Promise<Session> {
+    const session = this.getOrInit(schoolId);
+    if (session.status === 'connected' && session.sock) return session;
+
+    if (!this.hasSavedCreds(schoolId)) {
+      throw new Error('WhatsApp is not connected for this school. Link a number first.');
+    }
+    if (!session.starting && session.status !== 'connecting' && session.status !== 'qr') {
+      await this.startSocket(schoolId);
+    }
+
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const s = this.sessions.get(schoolId);
+      if (s?.status === 'connected' && s.sock) return s;
+      // A QR at this point means the saved credentials are no longer valid.
+      if (s?.status === 'qr') {
+        throw new Error('WhatsApp link has expired for this school. Scan the QR to link again.');
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    throw new Error('WhatsApp is reconnecting — please try again in a few seconds.');
+  }
+
   private async send(
     schoolId: string,
     to: string,
     content: AnyMessageContent
   ): Promise<string | undefined> {
-    const session = this.sessions.get(schoolId);
-    if (!session?.sock || session.status !== 'connected') {
-      throw new Error('WhatsApp is not connected for this school. Link a number first.');
-    }
+    const session = await this.ensureConnected(schoolId);
     const jid = this.toJid(to);
-    const sent = await session.sock.sendMessage(jid, content);
+    const sent = await session.sock!.sendMessage(jid, content);
     return sent?.key?.id ?? undefined;
   }
 
