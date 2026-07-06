@@ -344,6 +344,8 @@ export class StudentService {
         { rollNumber: { contains: search, mode: 'insensitive' } },
         { admissionNumber: { contains: search, mode: 'insensitive' } },
         { registrationNo: { contains: search, mode: 'insensitive' } },
+        { fatherName: { contains: search, mode: 'insensitive' } },
+        { motherName: { contains: search, mode: 'insensitive' } },
       ];
     }
 

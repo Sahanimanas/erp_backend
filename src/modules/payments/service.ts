@@ -468,7 +468,7 @@ export class PaymentsService {
       db.student.findMany({
         where: { schoolId, deletedAt: null, section: { classId } },
         select: {
-          id: true, rollNumber: true, registrationNo: true,
+          id: true, rollNumber: true, registrationNo: true, fatherName: true, motherName: true,
           transportAllotted: true, transportRoute: true, transportMonths: true,
           user: { select: { firstName: true, lastName: true, phone: true } },
           section: { select: { name: true, class: { select: { name: true } } } },
@@ -539,6 +539,8 @@ export class PaymentsService {
         rollNumber: s.rollNumber,
         regId: s.registrationNo ?? '',
         name: `${s.user?.firstName ?? ''} ${s.user?.lastName ?? ''}`.trim(),
+        fatherName: s.fatherName ?? '',
+        motherName: s.motherName ?? '',
         class: `${s.section?.class?.name ?? ''}-${s.section?.name ?? ''}`,
         phone: s.user?.phone ?? '',
         lastPaidDate,
