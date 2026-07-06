@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import whatsappService from './service';
+import templateService from './templateService';
 import { successResponse, errorResponse } from '@common/utils/response';
 import type { AnyMessageContent } from '@whiskeysockets/baileys';
 
@@ -112,6 +113,23 @@ export class WhatsAppController {
     } catch (error: any) {
       errorResponse(res, 400, error.message || 'Failed to send bulk messages');
     }
+  }
+
+  /** List the school's message templates. */
+  async listTemplates(req: Request, res: Response): Promise<void> {
+    try { successResponse(res, 200, await templateService.list(req.user!.schoolId)); }
+    catch (error: any) { errorResponse(res, 400, error.message); }
+  }
+
+  /** Create or update a template (body with {{placeholders}} + event). */
+  async upsertTemplate(req: Request, res: Response): Promise<void> {
+    try { successResponse(res, 200, await templateService.upsert(req.user!.schoolId, req.body), 'Template saved'); }
+    catch (error: any) { errorResponse(res, error.message.includes('not found') ? 404 : 400, error.message); }
+  }
+
+  async deleteTemplate(req: Request, res: Response): Promise<void> {
+    try { successResponse(res, 200, await templateService.remove(req.user!.schoolId, req.params.id)); }
+    catch (error: any) { errorResponse(res, error.message.includes('not found') ? 404 : 400, error.message); }
   }
 
   private buildMediaContent(media: any): AnyMessageContent {

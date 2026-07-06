@@ -63,6 +63,13 @@ export class PaymentsController {
     } catch (e: any) { errorResponse(res, codeFor(e), e.message); }
   }
 
+  async receiptWhatsApp(req: Request, res: Response): Promise<void> {
+    try {
+      const data = await paymentsService.sendReceiptWhatsApp(req.user!.schoolId, req.params.receiptNo);
+      successResponse(res, 200, data, `Receipt sent on WhatsApp to ${data.to}`);
+    } catch (e: any) { errorResponse(res, codeFor(e), e.message); }
+  }
+
   async classSummary(req: Request, res: Response): Promise<void> {
     try {
       const { academicYearId } = req.query;

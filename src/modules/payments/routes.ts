@@ -41,4 +41,7 @@ router.post('/students/:studentId/adjust', requireAuth, requireRole(...COLLECTOR
 router.post('/students/:studentId/delete-installment', requireAuth, requireRole(...COLLECTOR), (req, res) => paymentsController.deleteInstallment(req, res));
 router.post('/receipts/:receiptNo/revert', requireAuth, requireRole(...COLLECTOR), (req, res) => paymentsController.revert(req, res));
 
+// Send a receipt to the student's phone on WhatsApp
+router.post('/receipts/:receiptNo/whatsapp', requireAuth, requireRole(...COLLECTOR), (req, res) => paymentsController.receiptWhatsApp(req, res));
+
 export default router;

@@ -41,4 +41,19 @@ router.post('/send-bulk', requireAuth, adminOnly, async (req, res) => {
   await whatsappController.sendBulk(req, res);
 });
 
+/**
+ * Message templates ({{placeholder}} bodies + auto-send events)
+ */
+router.get('/templates', requireAuth, adminOnly, async (req, res) => {
+  await whatsappController.listTemplates(req, res);
+});
+
+router.post('/templates', requireAuth, adminOnly, async (req, res) => {
+  await whatsappController.upsertTemplate(req, res);
+});
+
+router.delete('/templates/:id', requireAuth, adminOnly, async (req, res) => {
+  await whatsappController.deleteTemplate(req, res);
+});
+
 export default router;

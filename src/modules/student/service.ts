@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { db } from '@common/database/client';
 import { hashPassword } from '@common/utils/crypto';
+import templateService from '../whatsapp/templateService';
 import { CreateStudentRequest, UpdateStudentRequest, UploadStudentDocumentRequest } from './types';
 
 export class StudentService {
@@ -165,6 +166,20 @@ export class StudentService {
         },
       });
     });
+
+    // Auto-fire enabled STUDENT_CREATED WhatsApp templates (welcome message).
+    // Fire-and-forget: messaging problems must never fail the admission.
+    void (async () => {
+      const school = await db.school.findUnique({ where: { id: schoolId }, select: { name: true } });
+      await templateService.sendEvent(schoolId, 'STUDENT_CREATED', student.user?.phone, {
+        school: school?.name ?? '',
+        name: `${student.user?.firstName ?? ''} ${student.user?.lastName ?? ''}`.trim(),
+        className: `${student.section?.class?.name ?? ''}-${student.section?.name ?? ''}`.replace(/^-|-$/g, ''),
+        rollNumber: student.rollNumber,
+        fatherName: (student as any).fatherName ?? '',
+        phone: student.user?.phone ?? '',
+      });
+    })().catch(() => { /* logged inside sendEvent */ });
 
     return student;
   }

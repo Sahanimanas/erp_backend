@@ -1291,6 +1291,28 @@ model TimetableSlot {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// WHATSAPP TEMPLATES
+// ─────────────────────────────────────────────────────────────────────────
+
+// Reusable message templates with {{placeholders}}. `event` decides when a
+// template fires automatically: MANUAL (never), STUDENT_CREATED (on new
+// student), PAYMENT_RECEIVED (on fee collection / manual receipt send).
+model WhatsAppTemplate {
+  id        String   @id @default(cuid())
+  schoolId  String
+  name      String
+  body      String
+  event     String   @default("MANUAL") // MANUAL | STUDENT_CREATED | PAYMENT_RECEIVED
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([schoolId, name])
+  @@index([schoolId])
+  @@index([schoolId, event])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // NOTIFICATIONS
 // ─────────────────────────────────────────────────────────────────────────
 

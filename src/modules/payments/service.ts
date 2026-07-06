@@ -1,6 +1,24 @@
 import { db } from '@common/database/client';
+import whatsappService from '../whatsapp/service';
+import templateService from '../whatsapp/templateService';
 
 const N = (v: any) => Number(v ?? 0);
+
+// Built-in receipt message used when no PAYMENT_RECEIVED template is set up.
+const DEFAULT_RECEIPT_TEMPLATE = [
+  '*{{school}}*',
+  'Payment Receipt *{{receiptNo}}*',
+  '',
+  'Student: {{name}} ({{className}})',
+  'Roll No: {{rollNumber}}',
+  'Date: {{date}}',
+  '',
+  '{{lines}}',
+  '',
+  '*Total Paid: Rs. {{total}}*',
+  '',
+  'Thank you for the payment.',
+].join('\n');
 
 export class PaymentsService {
   /** Resolve a student + their classId. */
@@ -357,7 +375,65 @@ export class PaymentsService {
           })
         )
     );
+    // Auto-notify on WhatsApp when a PAYMENT_RECEIVED template is enabled.
+    // Fire-and-forget: messaging problems must never fail the payment.
+    void this.receiptVars(schoolId, receiptNo)
+      .then(({ to, vars }) => templateService.sendEvent(schoolId, 'PAYMENT_RECEIVED', to, vars))
+      .catch(() => { /* logged inside sendEvent */ });
+
     return { receiptNo, lines: created.length };
+  }
+
+  /** Placeholder values + recipient for a receipt's WhatsApp message. */
+  private async receiptVars(schoolId: string, receiptNo: string) {
+    const rows = await db.feePayment.findMany({ where: { schoolId, receiptNo, kind: 'PAID' } });
+    if (!rows.length) throw new Error('Receipt not found');
+    const [student, school] = await Promise.all([
+      db.student.findFirst({
+        where: { id: rows[0].studentId, schoolId },
+        select: {
+          rollNumber: true, fatherName: true,
+          user: { select: { firstName: true, lastName: true, phone: true } },
+          section: { select: { name: true, class: { select: { name: true } } } },
+        },
+      }),
+      db.school.findUnique({ where: { id: schoolId }, select: { name: true } }),
+    ]);
+    const total = rows.reduce((s, r) => s + N(r.amount), 0);
+    const lines = rows
+      .map((r) => `- ${r.feeTypeName || 'Fee'}${r.month ? ` (${r.month})` : ''}: Rs. ${N(r.amount)}`)
+      .join('\n');
+    const d = rows[0].paidDate ?? rows[0].createdAt;
+    return {
+      to: student?.user?.phone || null,
+      vars: {
+        school: school?.name ?? '',
+        receiptNo,
+        name: `${student?.user?.firstName ?? ''} ${student?.user?.lastName ?? ''}`.trim(),
+        fatherName: student?.fatherName ?? '',
+        className: `${student?.section?.class?.name ?? ''}-${student?.section?.name ?? ''}`.replace(/^-|-$/g, ''),
+        rollNumber: student?.rollNumber ?? '',
+        date: d ? new Date(d).toLocaleDateString('en-GB') : '',
+        total,
+        lines,
+      },
+    };
+  }
+
+  /**
+   * Send a receipt to the student's phone on WhatsApp (the button on the
+   * payment pages). Uses the enabled PAYMENT_RECEIVED templates when present,
+   * otherwise a built-in receipt message.
+   */
+  async sendReceiptWhatsApp(schoolId: string, receiptNo: string) {
+    const { to, vars } = await this.receiptVars(schoolId, receiptNo);
+    if (!to) throw new Error('This student has no phone number on record');
+    const res = await templateService.sendEvent(schoolId, 'PAYMENT_RECEIVED', to, vars);
+    if (res.sent === 0) {
+      if (res.failed > 0) throw new Error('WhatsApp send failed — check the WhatsApp connection');
+      await whatsappService.sendText(schoolId, to, templateService.render(DEFAULT_RECEIPT_TEMPLATE, vars));
+    }
+    return { to, receiptNo };
   }
 
   async getHistory(schoolId: string, studentId: string) {
