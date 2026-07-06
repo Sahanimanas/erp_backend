@@ -71,6 +71,11 @@ const limiter = rateLimit({
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
+  // The WhatsApp connection page polls /whatsapp/status every few seconds
+  // while linking (QR refreshes), which burns the per-IP quota and then 429s
+  // the whole app. WhatsApp routes are authenticated and cheap — don't count
+  // them against the limit.
+  skip: (req) => req.path.includes('/whatsapp/'),
 });
 
 app.use(limiter);
