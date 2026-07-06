@@ -112,12 +112,40 @@ router.get('/classes/:classId/subjects', requireAuth, async (req, res) => {
   await academicController.listClassSubjects(req, res);
 });
 
+router.delete('/classes/:classId/subjects/:subjectId', requireAuth, requireRole('SCHOOL_ADMIN', 'PRINCIPAL'), async (req, res) => {
+  await academicController.unassignSubject(req, res);
+});
+
+/**
+ * Periods (timetable building blocks)
+ */
+
+router.get('/periods', requireAuth, async (req, res) => {
+  await academicController.listPeriods(req, res);
+});
+
+router.post('/periods', requireAuth, requireRole('SCHOOL_ADMIN', 'PRINCIPAL'), async (req, res) => {
+  await academicController.upsertPeriod(req, res);
+});
+
+router.delete('/periods/:id', requireAuth, requireRole('SCHOOL_ADMIN', 'PRINCIPAL'), async (req, res) => {
+  await academicController.deletePeriod(req, res);
+});
+
 /**
  * Timetable
  */
 
 router.get('/classes/:classId/timetable', requireAuth, async (req, res) => {
   await academicController.getClassTimetable(req, res);
+});
+
+router.get('/sections/:sectionId/timetable', requireAuth, async (req, res) => {
+  await academicController.getSectionTimetable(req, res);
+});
+
+router.post('/sections/:sectionId/timetable', requireAuth, requireRole('SCHOOL_ADMIN', 'PRINCIPAL'), async (req, res) => {
+  await academicController.saveSectionTimetable(req, res);
 });
 
 export default router;

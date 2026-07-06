@@ -639,13 +639,16 @@ export class AcademicService {
       throw new Error('Subject not found');
     }
 
-    // Verify teacher exists
-    const teacher = await db.employee.findUnique({
-      where: { id: teacherId },
-    });
+    // Teacher is optional — a subject can be mapped to a class before a
+    // teacher is decided. Verify only when one is provided.
+    if (teacherId) {
+      const teacher = await db.employee.findUnique({
+        where: { id: teacherId },
+      });
 
-    if (!teacher) {
-      throw new Error('Teacher not found');
+      if (!teacher) {
+        throw new Error('Teacher not found');
+      }
     }
 
     // Check if assignment already exists
@@ -667,7 +670,7 @@ export class AcademicService {
             subjectId,
           },
         },
-        data: { teacherId },
+        data: { teacherId: teacherId ?? null },
         include: {
           subject: true,
         },
@@ -681,7 +684,7 @@ export class AcademicService {
       data: {
         classId,
         subjectId,
-        teacherId,
+        teacherId: teacherId ?? null,
       },
       include: {
         subject: true,
@@ -689,6 +692,96 @@ export class AcademicService {
     });
 
     return assignment;
+  }
+
+  /** Remove a subject from a class (the subject itself is untouched). */
+  async unassignSubject(schoolId: string, classId: string, subjectId: string) {
+    const cls = await db.class.findFirst({ where: { id: classId, schoolId } });
+    if (!cls) throw new Error('Class not found');
+    const existing = await db.classSubject.findUnique({ where: { classId_subjectId: { classId, subjectId } } });
+    if (!existing) throw new Error('Subject is not assigned to this class');
+    await db.classSubject.delete({ where: { classId_subjectId: { classId, subjectId } } });
+    return { message: 'Subject removed from class' };
+  }
+
+  // ── Periods (timetable building blocks) ───────────────────────────────────
+  async listPeriods(schoolId: string) {
+    return db.period.findMany({ where: { schoolId }, orderBy: { startTime: 'asc' } });
+  }
+
+  async upsertPeriod(schoolId: string, data: { id?: string; name: string; startTime: string; endTime: string }) {
+    if (!data.name || !data.startTime || !data.endTime) throw new Error('name, startTime and endTime are required');
+    if (data.id) {
+      const p = await db.period.findFirst({ where: { id: data.id, schoolId } });
+      if (!p) throw new Error('Period not found');
+      return db.period.update({ where: { id: data.id }, data: { name: data.name.trim(), startTime: data.startTime, endTime: data.endTime } });
+    }
+    return db.period.upsert({
+      where: { schoolId_name: { schoolId, name: data.name.trim() } },
+      update: { startTime: data.startTime, endTime: data.endTime },
+      create: { schoolId, name: data.name.trim(), startTime: data.startTime, endTime: data.endTime },
+    });
+  }
+
+  async deletePeriod(schoolId: string, id: string) {
+    const p = await db.period.findFirst({ where: { id, schoolId } });
+    if (!p) throw new Error('Period not found');
+    await db.period.delete({ where: { id } }); // cascades to its timetable slots
+    return { message: 'Period deleted' };
+  }
+
+  // ── Section timetable (day × period grid) ─────────────────────────────────
+  /** Slots for one section with period + subject details for the grid. */
+  async getSectionTimetable(schoolId: string, sectionId: string) {
+    const section = await db.section.findFirst({
+      where: { id: sectionId, schoolId },
+      select: { id: true, name: true, class: { select: { id: true, name: true } } },
+    });
+    if (!section) throw new Error('Section not found');
+
+    const [slots, subjects] = await Promise.all([
+      db.timetableSlot.findMany({ where: { schoolId, sectionId }, include: { period: true } }),
+      db.subject.findMany({ where: { schoolId, deletedAt: null }, select: { id: true, name: true, code: true } }),
+    ]);
+    const subjectById = new Map(subjects.map((s) => [s.id, s]));
+    return {
+      section,
+      slots: slots.map((s) => ({
+        id: s.id,
+        day: s.day,
+        periodId: s.periodId,
+        period: s.period,
+        subjectId: s.subjectId,
+        subject: subjectById.get(s.subjectId) ?? null,
+      })),
+    };
+  }
+
+  /**
+   * Save a section's timetable: upsert one slot per (day, period); an empty
+   * subjectId clears that cell.
+   */
+  async saveSectionTimetable(schoolId: string, sectionId: string, slots: Array<{ day: string; periodId: string; subjectId?: string | null }>) {
+    const section = await db.section.findFirst({ where: { id: sectionId, schoolId } });
+    if (!section) throw new Error('Section not found');
+    if (!Array.isArray(slots)) throw new Error('slots[] required');
+
+    let saved = 0;
+    for (const s of slots) {
+      if (!s.day || !s.periodId) continue;
+      const where = { schoolId_sectionId_periodId_day: { schoolId, sectionId, periodId: s.periodId, day: s.day } };
+      if (!s.subjectId) {
+        await db.timetableSlot.deleteMany({ where: { schoolId, sectionId, periodId: s.periodId, day: s.day } });
+      } else {
+        await db.timetableSlot.upsert({
+          where,
+          update: { subjectId: s.subjectId },
+          create: { schoolId, sectionId, periodId: s.periodId, day: s.day, subjectId: s.subjectId },
+        });
+      }
+      saved++;
+    }
+    return { saved };
   }
 
   /**

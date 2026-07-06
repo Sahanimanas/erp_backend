@@ -400,18 +400,60 @@ export class AcademicController {
   async assignTeacherToSubject(req: Request, res: Response): Promise<void> {
     try {
       const schoolId = req.user?.schoolId;
-      const { classId, subjectId, teacherId } = req.body;
+      const { classId, subjectId } = req.body;
 
-      if (!schoolId || !classId || !subjectId || !teacherId) {
+      // teacherId is optional — subjects can be mapped before a teacher is set.
+      if (!schoolId || !classId || !subjectId) {
         return void errorResponse(res, 400, 'Required fields missing');
       }
 
       const assignment = await academicService.assignTeacherToSubject(schoolId, req.body);
-      createdResponse(res, assignment, 'Teacher assigned successfully');
+      createdResponse(res, assignment, 'Subject assigned successfully');
     } catch (error: any) {
       const statusCode = error.message.includes('not found') ? 404 : 400;
-      errorResponse(res, statusCode, error.message || 'Failed to assign teacher');
+      errorResponse(res, statusCode, error.message || 'Failed to assign subject');
     }
+  }
+
+  /** Remove a subject from a class. */
+  async unassignSubject(req: Request, res: Response): Promise<void> {
+    try {
+      const schoolId = req.user!.schoolId;
+      const { classId, subjectId } = req.params;
+      successResponse(res, 200, await academicService.unassignSubject(schoolId, classId, subjectId));
+    } catch (error: any) {
+      const statusCode = error.message.includes('not') ? 404 : 400;
+      errorResponse(res, statusCode, error.message || 'Failed to remove subject');
+    }
+  }
+
+  // ── Periods ────────────────────────────────────────────────────────────────
+  async listPeriods(req: Request, res: Response): Promise<void> {
+    try { successResponse(res, 200, await academicService.listPeriods(req.user!.schoolId)); }
+    catch (error: any) { errorResponse(res, 400, error.message); }
+  }
+
+  async upsertPeriod(req: Request, res: Response): Promise<void> {
+    try { successResponse(res, 200, await academicService.upsertPeriod(req.user!.schoolId, req.body), 'Period saved'); }
+    catch (error: any) { errorResponse(res, error.message.includes('not found') ? 404 : 400, error.message); }
+  }
+
+  async deletePeriod(req: Request, res: Response): Promise<void> {
+    try { successResponse(res, 200, await academicService.deletePeriod(req.user!.schoolId, req.params.id)); }
+    catch (error: any) { errorResponse(res, error.message.includes('not found') ? 404 : 400, error.message); }
+  }
+
+  // ── Section timetable ─────────────────────────────────────────────────────
+  async getSectionTimetable(req: Request, res: Response): Promise<void> {
+    try { successResponse(res, 200, await academicService.getSectionTimetable(req.user!.schoolId, req.params.sectionId)); }
+    catch (error: any) { errorResponse(res, error.message.includes('not found') ? 404 : 400, error.message); }
+  }
+
+  async saveSectionTimetable(req: Request, res: Response): Promise<void> {
+    try {
+      const data = await academicService.saveSectionTimetable(req.user!.schoolId, req.params.sectionId, req.body.slots);
+      successResponse(res, 200, data, `Saved ${data.saved} slot(s)`);
+    } catch (error: any) { errorResponse(res, error.message.includes('not found') ? 404 : 400, error.message); }
   }
 
   /**

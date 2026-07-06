@@ -57,7 +57,8 @@ export interface UpdateSubjectRequest {
 export interface AssignTeacherToSubjectRequest {
   classId: string;
   subjectId: string;
-  teacherId: string;
+  // Optional — subjects can be mapped to a class before a teacher is set.
+  teacherId?: string;
 }
 
 export interface ClassSubjectWithDetails {
