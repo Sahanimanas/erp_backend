@@ -830,7 +830,8 @@ export class AcademicService {
     }
 
     const subjects = await db.classSubject.findMany({
-      where: { classId },
+      // Hide mappings whose subject was (soft-)deleted from the master list.
+      where: { classId, subject: { deletedAt: null } },
       include: {
         subject: true,
         class: {

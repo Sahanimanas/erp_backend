@@ -61,11 +61,19 @@ export class ExamMgmtService {
     const exam = await db.exam.findFirst({ where: { id: examId, schoolId, deletedAt: null } });
     if (!exam) throw new Error('Exam not found');
 
+    // Papers may only be scheduled inside the exam's date window.
+    const windowStart = new Date(exam.startDate); windowStart.setHours(0, 0, 0, 0);
+    const windowEnd = new Date(exam.endDate); windowEnd.setHours(23, 59, 59, 999);
+    const fmt = (d: Date) => d.toLocaleDateString('en-GB');
+
     let saved = 0;
     for (const it of items) {
       if (!it.subjectId || !it.examDate) continue;
       const examDate = new Date(it.examDate);
       if (isNaN(examDate.getTime())) continue;
+      if (examDate < windowStart || examDate > windowEnd) {
+        throw new Error(`Paper dates must be within the exam window ${fmt(windowStart)} – ${fmt(windowEnd)}`);
+      }
       const data = {
         examDate,
         startTime: it.startTime || '09:00',
