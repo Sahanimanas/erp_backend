@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import whatsappService from './service';
-import templateService from './templateService';
+import templateService, { broadcastToStudents } from './templateService';
 import { successResponse, errorResponse } from '@common/utils/response';
 import type { AnyMessageContent } from '@whiskeysockets/baileys';
 
@@ -113,6 +113,14 @@ export class WhatsAppController {
     } catch (error: any) {
       errorResponse(res, 400, error.message || 'Failed to send bulk messages');
     }
+  }
+
+  /** Broadcast a message to all / class / section / selected students. */
+  async broadcast(req: Request, res: Response): Promise<void> {
+    try {
+      const result = await broadcastToStudents(req.user!.schoolId, req.body);
+      successResponse(res, 200, result, `Sent to ${result.sent} of ${result.recipients} number(s)`);
+    } catch (error: any) { errorResponse(res, 400, error.message || 'Broadcast failed'); }
   }
 
   /** List the school's message templates. */

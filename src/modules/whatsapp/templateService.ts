@@ -74,4 +74,37 @@ export class WhatsAppTemplateService {
   }
 }
 
+/**
+ * Broadcast a message to many students' phones at once. Targets:
+ *   - everyone (no filter)
+ *   - a class (classId) or one section (sectionId)
+ *   - a hand-picked list (studentIds)
+ * Numbers are de-duplicated (siblings sharing a parent phone get one message).
+ */
+export async function broadcastToStudents(
+  schoolId: string,
+  data: { message: string; classId?: string; sectionId?: string; studentIds?: string[] }
+): Promise<{ recipients: number; sent: number; failed: number; skippedNoPhone: number }> {
+  if (!data.message?.trim()) throw new Error('Message is required');
+
+  const where: any = { schoolId, deletedAt: null };
+  if (Array.isArray(data.studentIds) && data.studentIds.length) where.id = { in: data.studentIds };
+  else if (data.sectionId) where.sectionId = data.sectionId;
+  else if (data.classId) where.section = { classId: data.classId };
+
+  const students = await db.student.findMany({
+    where,
+    select: { user: { select: { phone: true } } },
+  });
+  if (!students.length) throw new Error('No students match the selected filter');
+
+  const phones = [...new Set(students.map((s) => s.user?.phone).filter(Boolean))] as string[];
+  const skippedNoPhone = students.length - students.filter((s) => s.user?.phone).length;
+  if (!phones.length) throw new Error('None of the selected students have a phone number');
+
+  const results = await whatsappService.sendBulk(schoolId, phones, { text: data.message });
+  const sent = results.filter((r) => r.success).length;
+  return { recipients: phones.length, sent, failed: phones.length - sent, skippedNoPhone };
+}
+
 export default new WhatsAppTemplateService();

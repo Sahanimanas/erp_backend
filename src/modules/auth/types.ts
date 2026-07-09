@@ -44,6 +44,7 @@ export interface AuthResponse {
     schoolName?: string;
     schoolLogo?: string | null;
     schoolWatermark?: string | null;
+    schoolUpiQr?: string | null;
     schoolAddress?: string | null;
     schoolPhone?: string | null;
     schoolEmail?: string | null;

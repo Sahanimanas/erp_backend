@@ -111,6 +111,9 @@ model School {
   country            String?
   logo               String?
   watermark          String?
+  // UPI payment QR image (data URL / file URL). Printed on demand bills with
+  // a "Pay on this QR" caption when set.
+  upiQr              String?
   website            String?
   foundedYear        Int?
   principalName      String?

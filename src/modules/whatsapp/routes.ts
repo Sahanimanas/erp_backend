@@ -41,6 +41,11 @@ router.post('/send-bulk', requireAuth, adminOnly, async (req, res) => {
   await whatsappController.sendBulk(req, res);
 });
 
+// Broadcast to all / class / section / selected students
+router.post('/broadcast', requireAuth, adminOnly, async (req, res) => {
+  await whatsappController.broadcast(req, res);
+});
+
 /**
  * Message templates ({{placeholder}} bodies + auto-send events)
  */

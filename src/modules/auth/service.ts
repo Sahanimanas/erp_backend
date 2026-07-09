@@ -33,7 +33,7 @@ export class AuthService {
         student: true,
         employee: { include: { designation: { select: { permissions: true } } } },
         parent: true,
-        school: { select: { id: true, name: true, logo: true, watermark: true, address: true, phone: true, email: true } },
+        school: { select: { id: true, name: true, logo: true, watermark: true, upiQr: true, address: true, phone: true, email: true } },
       },
     });
 
@@ -124,6 +124,7 @@ export class AuthService {
         schoolLogo: (user as any).school?.logo ?? null,
         // School contact details — used on printed bills / fee receipts.
         schoolWatermark: (user as any).school?.watermark ?? null,
+        schoolUpiQr: (user as any).school?.upiQr ?? null,
         schoolAddress: (user as any).school?.address ?? null,
         schoolPhone: (user as any).school?.phone ?? null,
         schoolEmail: (user as any).school?.email ?? null,
@@ -308,7 +309,7 @@ export class AuthService {
         role: true,
         schoolId: true,
         isActive: true,
-        school: { select: { id: true, name: true, logo: true, watermark: true, address: true, phone: true, email: true } },
+        school: { select: { id: true, name: true, logo: true, watermark: true, upiQr: true, address: true, phone: true, email: true } },
         student: {
           select: {
             id: true,
