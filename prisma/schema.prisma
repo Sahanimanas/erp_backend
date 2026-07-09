@@ -1315,6 +1315,18 @@ model WhatsAppTemplate {
   @@index([schoolId, event])
 }
 
+model WhatsAppAuthFile {
+  id        String   @id @default(cuid())
+  schoolId  String
+  name      String
+  data      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([schoolId, name])
+  @@index([schoolId])
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // NOTIFICATIONS
 // ─────────────────────────────────────────────────────────────────────────

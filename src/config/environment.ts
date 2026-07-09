@@ -1,6 +1,12 @@
 import dotenv from 'dotenv';
+import path from 'path';
 
 dotenv.config();
+
+const backendRoot = path.resolve(__dirname, '../..');
+const resolveBackendPath = (value: string) => (
+  path.isAbsolute(value) ? value : path.resolve(backendRoot, value)
+);
 
 const requiredEnvVars = [
   'DATABASE_URL',
@@ -92,7 +98,7 @@ export const config = {
   // persisted per-school under `sessionDir/<schoolId>` so the same number is
   // reused to send messages and media to many recipients.
   whatsapp: {
-    sessionDir: process.env.WHATSAPP_SESSION_DIR || './storage/whatsapp',
+    sessionDir: resolveBackendPath(process.env.WHATSAPP_SESSION_DIR || 'storage/whatsapp'),
     // Friendly device name shown in WhatsApp → Linked Devices.
     deviceName: process.env.WHATSAPP_DEVICE_NAME || 'School ERP',
   },

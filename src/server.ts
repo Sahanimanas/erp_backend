@@ -2,6 +2,7 @@ import http from 'http';
 import app from './app';
 import { config } from '@config/environment';
 import { db } from '@common/database/client';
+import whatsappService from '@modules/whatsapp/service';
 
 const server = http.createServer(app);
 
@@ -14,6 +15,12 @@ const startServer = async () => {
     console.log('Testing database connection...');
     await db.$queryRaw`SELECT 1`;
     console.log('✓ Database connected');
+
+    void whatsappService.resumeLinkedSessions()
+      .then(({ linked, resumed }) => {
+        if (linked > 0) console.log(`WhatsApp sessions: ${resumed}/${linked} saved login(s) resuming`);
+      })
+      .catch((err) => console.error('WhatsApp session resume failed:', err?.message || err));
 
     // Start listening
     server.listen(config.port, () => {
