@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import employeeService from './service';
 import { successResponse, errorResponse, createdResponse, paginatedResponse, deletedResponse } from '@common/utils/response';
+import { DESIGNATION_MODULES } from '@common/constants/designationModules';
 
 export class EmployeeController {
   async createEmployee(req: Request, res: Response): Promise<void> {
@@ -60,12 +61,14 @@ export class EmployeeController {
       const limit = parseInt(req.query.limit as string) || 10;
       const departmentId = req.query.departmentId as string | undefined;
       const search = req.query.search as string | undefined;
+      const role = req.query.role as string | undefined;
+      const status = req.query.status as string | undefined;
 
       if (!schoolId) {
         return void errorResponse(res, 400, 'School ID required');
       }
 
-      const result = await employeeService.listEmployees(schoolId, page, limit, departmentId, search);
+      const result = await employeeService.listEmployees(schoolId, page, limit, departmentId, search, role, status);
       paginatedResponse(res, result.data, page, limit, result.pagination.total);
     } catch (error: any) {
       errorResponse(res, 400, error.message || 'Failed to list employees');
@@ -87,6 +90,28 @@ export class EmployeeController {
       const statusCode = error.message.includes('not found') ? 404 : 400;
       errorResponse(res, statusCode, error.message || 'Failed to deactivate employee');
     }
+  }
+
+  async activateEmployee(req: Request, res: Response): Promise<void> {
+    try {
+      const schoolId = req.user?.schoolId;
+      const { employeeId } = req.params;
+
+      if (!schoolId || !employeeId) {
+        return void errorResponse(res, 400, 'Required fields missing');
+      }
+
+      await employeeService.activateEmployee(schoolId, employeeId);
+      successResponse(res, 200, null, 'Employee activated successfully');
+    } catch (error: any) {
+      const statusCode = error.message.includes('not found') ? 404 : 400;
+      errorResponse(res, statusCode, error.message || 'Failed to activate employee');
+    }
+  }
+
+  /** The canonical privilege modules a designation can be granted (backend-owned). */
+  async listDesignationModules(_req: Request, res: Response): Promise<void> {
+    successResponse(res, 200, DESIGNATION_MODULES);
   }
 
   async createDepartment(req: Request, res: Response): Promise<void> {

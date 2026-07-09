@@ -178,13 +178,28 @@ export class EmployeeService {
   /**
    * List employees
    */
-  async listEmployees(schoolId: string, page: number = 1, limit: number = 10, departmentId?: string, search?: string) {
+  async listEmployees(
+    schoolId: string,
+    page: number = 1,
+    limit: number = 10,
+    departmentId?: string,
+    search?: string,
+    role?: string,
+    status?: string,
+  ) {
     const skip = (page - 1) * limit;
-    const where: any = { schoolId };
+    const where: any = { schoolId, deletedAt: null };
 
     if (departmentId) {
       where.departmentId = departmentId;
     }
+
+    // Filter by the linked user's role and/or active status.
+    const userWhere: any = {};
+    if (role) userWhere.role = role;
+    if (status === 'active') userWhere.isActive = true;
+    if (status === 'inactive') userWhere.isActive = false;
+    if (Object.keys(userWhere).length) where.user = userWhere;
 
     if (search) {
       where.OR = [
@@ -203,9 +218,13 @@ export class EmployeeService {
         include: {
           user: {
             select: {
+              id: true,
               firstName: true,
               lastName: true,
               email: true,
+              phone: true,
+              role: true,
+              isActive: true,
             },
           },
           department: {
@@ -572,6 +591,26 @@ export class EmployeeService {
     });
 
     return { message: 'Employee deactivated' };
+  }
+
+  /**
+   * Reactivate employee login (re-enables the linked user account).
+   */
+  async activateEmployee(schoolId: string, employeeId: string) {
+    const employee = await db.employee.findFirst({
+      where: { id: employeeId, schoolId },
+    });
+
+    if (!employee) {
+      throw new Error('Employee not found');
+    }
+
+    await db.user.update({
+      where: { id: employee.userId },
+      data: { isActive: true },
+    });
+
+    return { message: 'Employee activated' };
   }
 }
 

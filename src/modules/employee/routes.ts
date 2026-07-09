@@ -25,6 +25,9 @@ router.get('/designations', requireAuth, (req, res) => employeeController.listDe
 router.patch('/designations/:id', requireAuth, requireRole(...ADMIN), (req, res) => employeeController.updateDesignation(req, res));
 router.delete('/designations/:id', requireAuth, requireRole(...ADMIN), (req, res) => employeeController.deleteDesignation(req, res));
 
+// ── Designation privilege modules (canonical list, backend-owned) ─────────
+router.get('/designation-modules', requireAuth, (req, res) => employeeController.listDesignationModules(req, res));
+
 // ── Bulk import ───────────────────────────────────────────────────────────
 router.post('/import', requireAuth, requireRole(...ADMIN), (req, res) => employeeController.importEmployees(req, res));
 
@@ -36,6 +39,7 @@ router.get('/', requireAuth, (req, res) => employeeController.listEmployees(req,
 router.get('/:employeeId', requireAuth, (req, res) => employeeController.getEmployeeById(req, res));
 router.put('/:employeeId', requireAuth, requireRole(...ADMIN), (req, res) => employeeController.updateEmployee(req, res));
 router.patch('/:employeeId/deactivate', requireAuth, requireRole(...ADMIN), (req, res) => employeeController.deactivateEmployee(req, res));
+router.patch('/:employeeId/activate', requireAuth, requireRole(...ADMIN), (req, res) => employeeController.activateEmployee(req, res));
 
 // ── Leave Management ──────────────────────────────────────────────────────
 router.post('/:employeeId/leaves', requireAuth, (req, res) => employeeController.applyLeave(req, res));
