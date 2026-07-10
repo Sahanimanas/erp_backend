@@ -522,6 +522,16 @@ model Student {
   // like class fees — no stored fee rows).
   transportMonths   Json?
 
+  // Enrollment status. A student who has LEFT the school is set inactive but
+  // NOT deleted — their record + fee history stay in the DB for reference.
+  // `leftDate` records when they left; `billedUntilMonth` (e.g. "Jun-2025") is
+  // the last month for which recurring (Monthly/Quarterly) fees are billed —
+  // months after it are not charged. Session / One-time fees are unaffected and
+  // stay fully due (the admin can waive them via discount).
+  isActive         Boolean   @default(true)
+  leftDate         DateTime?
+  billedUntilMonth String?
+
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   deletedAt      DateTime?

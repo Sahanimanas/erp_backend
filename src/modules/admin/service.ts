@@ -44,13 +44,19 @@ export class AdminService {
     }
 
     const [existingSchool, existingDomain] = await Promise.all([
-      db.school.findUnique({ where: { slug: subdomain } }),
+      // Ignore soft-deleted schools — their slug is released on delete/re-create.
+      db.school.findFirst({ where: { slug: subdomain, deletedAt: null } }),
       db.schoolDomain.findUnique({
         where: { domain: `${subdomain}.${config.domain.platform}` },
       }),
     ]);
 
-    if (existingSchool || existingDomain) {
+    // A domain row only blocks if its owning school is still active.
+    const domainBlocks = existingDomain
+      ? !!(await db.school.findFirst({ where: { id: existingDomain.schoolId, deletedAt: null } }))
+      : false;
+
+    if (existingSchool || domainBlocks) {
       return { available: false, subdomain, reason: 'Subdomain is already taken' };
     }
 
@@ -80,10 +86,12 @@ export class AdminService {
       throw new Error(syntax.error || 'Invalid subdomain');
     }
 
-    // Uniqueness checks (school name, email, slug, subdomain FQDN).
+    // Uniqueness checks (school name, email, slug, subdomain FQDN). Only ACTIVE
+    // schools block creation — a soft-deleted school that still holds these
+    // values is released below so the same name/subdomain/email can be reused.
     const fqdn = `${subdomain}.${config.domain.platform}`;
     const [dupSchool, dupDomain] = await Promise.all([
-      db.school.findFirst({ where: { OR: [{ email }, { name }, { slug: subdomain }] } }),
+      db.school.findFirst({ where: { deletedAt: null, OR: [{ email }, { name }, { slug: subdomain }] } }),
       db.schoolDomain.findUnique({ where: { domain: fqdn } }),
     ]);
     if (dupSchool) {
@@ -91,7 +99,14 @@ export class AdminService {
       if (dupSchool.email === email) throw new Error('A school with this email already exists');
       throw new Error('A school with this name already exists');
     }
-    if (dupDomain) throw new Error('Subdomain is already taken');
+    if (dupDomain) {
+      const domainOwner = await db.school.findUnique({ where: { id: dupDomain.schoolId } });
+      if (domainOwner && !domainOwner.deletedAt) throw new Error('Subdomain is already taken');
+    }
+
+    // Free up identifiers still held by any previously-deleted school/domain so
+    // the create transaction below won't hit a unique-constraint violation.
+    await this.releaseDeletedConflicts(email, name, subdomain, fqdn);
 
     // Resolve the plan (explicit id, by name, or fall back to any active plan).
     const plan = await this.resolvePlan(data.planId, data.planName);
@@ -385,14 +400,77 @@ export class AdminService {
     return db.school.update({ where: { id: schoolId }, data: { isActive: true } });
   }
 
+  // Marker appended to a deleted school's globally-unique fields so the same
+  // name / subdomain / email can be reused by a new school. Keyed by the row id
+  // so the tombstoned value is itself unique and stable (no clashes on repeat).
+  private static DELETED_MARK = '__deleted__';
+  private tombstone(value: string, id: string): string {
+    return value.includes(AdminService.DELETED_MARK) ? value : `${value}${AdminService.DELETED_MARK}${id}`;
+  }
+
+  /**
+   * Soft-delete a school AND release its globally-unique identifiers (name, slug,
+   * email, schoolCode, registrationNumber + its domain rows) so a new school can
+   * be created with the same values. The record itself is retained (deletedAt
+   * set) for audit — nothing is hard-deleted.
+   */
   async deleteSchool(schoolId: string) {
     const school = await db.school.findUnique({ where: { id: schoolId } });
     if (!school) throw new Error('School not found');
     if (school.deletedAt) throw new Error('School is already deleted');
-    return db.school.update({
-      where: { id: schoolId },
-      data: { deletedAt: new Date(), isActive: false },
+
+    return db.$transaction(async (tx) => {
+      const updated = await tx.school.update({
+        where: { id: schoolId },
+        data: {
+          deletedAt: new Date(),
+          isActive: false,
+          name: this.tombstone(school.name, school.id),
+          slug: this.tombstone(school.slug, school.id),
+          email: this.tombstone(school.email, school.id),
+          ...(school.schoolCode ? { schoolCode: this.tombstone(school.schoolCode, school.id) } : {}),
+          ...(school.registrationNumber ? { registrationNumber: this.tombstone(school.registrationNumber, school.id) } : {}),
+        },
+      });
+      // Domain is globally unique too — release each so the FQDN can be reissued.
+      const domains = await tx.schoolDomain.findMany({ where: { schoolId } });
+      for (const d of domains) {
+        await tx.schoolDomain.update({
+          where: { id: d.id },
+          data: { domain: this.tombstone(d.domain, d.id), isActive: false },
+        });
+      }
+      return updated;
     });
+  }
+
+  /**
+   * Release the unique identifiers held by any ALREADY soft-deleted school (or
+   * its domain) that collides with the values a new school wants. Fixes schools
+   * deleted before delete-time release existed, so their name/subdomain/email
+   * become reusable. Active schools are left untouched (the caller rejects them).
+   */
+  private async releaseDeletedConflicts(email: string, name: string, subdomain: string, fqdn: string) {
+    const conflicts = await db.school.findMany({
+      where: { deletedAt: { not: null }, OR: [{ email }, { name }, { slug: subdomain }] },
+    });
+    for (const c of conflicts) {
+      await db.school.update({
+        where: { id: c.id },
+        data: {
+          name: this.tombstone(c.name, c.id),
+          slug: this.tombstone(c.slug, c.id),
+          email: this.tombstone(c.email, c.id),
+        },
+      });
+    }
+    const dom = await db.schoolDomain.findUnique({ where: { domain: fqdn } });
+    if (dom) {
+      const owner = await db.school.findUnique({ where: { id: dom.schoolId } });
+      if (owner?.deletedAt) {
+        await db.schoolDomain.update({ where: { id: dom.id }, data: { domain: this.tombstone(dom.domain, dom.id), isActive: false } });
+      }
+    }
   }
 
   /**

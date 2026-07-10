@@ -342,7 +342,8 @@ export class StudentService {
     classId?: string,
     admissionFrom?: string,
     admissionTo?: string,
-    fatherName?: string
+    fatherName?: string,
+    status?: string
   ) {
     const skip = (page - 1) * limit;
     const where: any = { schoolId, deletedAt: null };
@@ -352,6 +353,9 @@ export class StudentService {
     if (classId && !sectionId) where.section = { classId };
     // Dedicated father-name filter — ANDs with the free-text search.
     if (fatherName) where.fatherName = { contains: fatherName, mode: 'insensitive' };
+    // Enrollment status filter (students who left are inactive but kept in DB).
+    if (status === 'active') where.isActive = true;
+    else if (status === 'inactive') where.isActive = false;
 
     if (search) {
       where.OR = [
@@ -728,7 +732,19 @@ export class StudentService {
   /**
    * Deactivate student
    */
-  async deactivateStudent(schoolId: string, studentId: string) {
+  /**
+   * Mark a student INACTIVE (left the school) without deleting them. The record
+   * and its fee history are retained so the admin keeps a full picture of what
+   * the student was billed. `billedUntilMonth` ("Jun-2025") caps recurring
+   * (Monthly/Quarterly) fee accrual to that month — see PaymentsService's ledger
+   * capping. Defaults to the current calendar month when omitted. Also disables
+   * the student's login. Session / One-time fees stay fully due for later waiver.
+   */
+  async deactivateStudent(
+    schoolId: string,
+    studentId: string,
+    opts: { billedUntilMonth?: string; leftDate?: string } = {}
+  ) {
     const student = await db.student.findFirst({
       where: { id: studentId, schoolId },
     });
@@ -737,16 +753,28 @@ export class StudentService {
       throw new Error('Student not found');
     }
 
-    await db.user.update({
-      where: { id: student.userId },
-      data: { isActive: false },
-    });
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const now = new Date();
+    const billedUntilMonth = opts.billedUntilMonth || `${MONTHS[now.getMonth()]}-${now.getFullYear()}`;
+    const leftDate = opts.leftDate ? new Date(opts.leftDate) : now;
 
-    return { message: 'Student deactivated' };
+    await db.$transaction([
+      db.student.update({
+        where: { id: student.id },
+        data: { isActive: false, leftDate, billedUntilMonth },
+      }),
+      db.user.update({
+        where: { id: student.userId },
+        data: { isActive: false },
+      }),
+    ]);
+
+    return { message: 'Student marked inactive', billedUntilMonth, leftDate };
   }
 
   /**
-   * Activate student
+   * Re-activate a student (re-admission / undo). Clears the leaving metadata so
+   * recurring fees resume accruing normally, and re-enables login.
    */
   async activateStudent(schoolId: string, studentId: string) {
     const student = await db.student.findFirst({
@@ -757,10 +785,16 @@ export class StudentService {
       throw new Error('Student not found');
     }
 
-    await db.user.update({
-      where: { id: student.userId },
-      data: { isActive: true },
-    });
+    await db.$transaction([
+      db.student.update({
+        where: { id: student.id },
+        data: { isActive: true, leftDate: null, billedUntilMonth: null },
+      }),
+      db.user.update({
+        where: { id: student.userId },
+        data: { isActive: true },
+      }),
+    ]);
 
     return { message: 'Student activated' };
   }

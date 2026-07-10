@@ -145,7 +145,7 @@ export class PaymentsService {
     ]);
 
     const tStruct = await this.transportStructureForStudent(schoolId, student);
-    const allStructures = tStruct ? [...structures, tStruct] : structures;
+    const allStructures = this.capStructuresForStudent(tStruct ? [...structures, tStruct] : structures, student);
     const { items, totals } = this.computeLedger(allStructures, payments);
 
     return {
@@ -174,6 +174,37 @@ export class PaymentsService {
     const idx = PaymentsService.MONTHS.indexOf(mon);
     if (idx < 0 || !yr) return null;
     return new Date(Number(yr), idx, 2);
+  }
+
+  /** Sortable index for a "Mon-YYYY" label (year*12 + monthIdx), or null. */
+  private monthIndex(m?: string | null): number | null {
+    if (!m) return null;
+    const [mon, yr] = m.split('-');
+    const idx = PaymentsService.MONTHS.indexOf(mon);
+    if (idx < 0 || !yr) return null;
+    return Number(yr) * 12 + idx;
+  }
+
+  /**
+   * When a student has LEFT the school (isActive === false) with a billing
+   * cutoff (`billedUntilMonth`), recurring (Monthly/Quarterly) fees are only
+   * billed up to and INCLUDING that month — later months are dropped so no
+   * further fee accrues. Session / One-time fees (and any fee whose months we
+   * can't parse) are left untouched: they stay fully due so the admin can waive
+   * them via a discount. Active students are returned unchanged.
+   */
+  private capStructuresForStudent(structures: any[], student: any): any[] {
+    const cutoff = student && student.isActive === false ? this.monthIndex(student.billedUntilMonth) : null;
+    if (cutoff == null) return structures;
+    return structures.map((s) => {
+      const ft = s.feeType;
+      if (!ft || !['Monthly', 'Quarterly'].includes(ft.frequency) || !Array.isArray(ft.months) || !ft.months.length) return s;
+      const months = ft.months.filter((m: string) => {
+        const mi = this.monthIndex(m);
+        return mi == null ? true : mi <= cutoff;
+      });
+      return { ...s, feeType: { ...ft, months } };
+    });
   }
 
   /**
@@ -249,7 +280,7 @@ export class PaymentsService {
     ]);
 
     const tStruct = await this.transportStructureForStudent(schoolId, student);
-    const allStructures = tStruct ? [...structures, tStruct] : structures;
+    const allStructures = this.capStructuresForStudent(tStruct ? [...structures, tStruct] : structures, student);
     const rows = this.buildInstallmentRows(allStructures, payments, (student as any).admissionDate);
     const totals = rows.reduce(
       (t, r) => ({ total: t.total + r.totalAmount, paid: t.paid + r.paid, discount: t.discount + r.discount, due: t.due + r.due }),
@@ -450,6 +481,7 @@ export class PaymentsService {
         where: { schoolId, deletedAt: null, section: { classId } },
         select: {
           id: true, rollNumber: true, registrationNo: true, fatherName: true,
+          isActive: true, billedUntilMonth: true,
           transportAllotted: true, transportRoute: true, transportMonths: true,
           user: { select: { firstName: true, lastName: true, phone: true } },
           section: { select: { name: true, class: { select: { name: true } } } },
@@ -474,7 +506,7 @@ export class PaymentsService {
     const routeMap = await this.routeMapByName(schoolId);
 
     return students.map((s) => {
-      const { items, totals } = this.computeLedger(this.withTransport(structures, routeMap, s), byStudent.get(s.id) || []);
+      const { items, totals } = this.computeLedger(this.capStructuresForStudent(this.withTransport(structures, routeMap, s), s), byStudent.get(s.id) || []);
       return {
         studentId: s.id,
         rollNumber: s.rollNumber,
@@ -503,7 +535,8 @@ export class PaymentsService {
       db.student.findMany({
         where: { schoolId, deletedAt: null },
         select: {
-          id: true, transportAllotted: true, transportRoute: true, transportMonths: true,
+          id: true, isActive: true, billedUntilMonth: true,
+          transportAllotted: true, transportRoute: true, transportMonths: true,
           section: { select: { classId: true } },
         },
       }),
@@ -524,7 +557,7 @@ export class PaymentsService {
       const structures = await this.fetchClassStructures(schoolId, cls.id, academicYearId);
       let total = 0, collected = 0, pending = 0;
       for (const s of clsStudents) {
-        const { totals } = this.computeLedger(this.withTransport(structures, routeMap, s), byStudent.get(s.id) || []);
+        const { totals } = this.computeLedger(this.capStructuresForStudent(this.withTransport(structures, routeMap, s), s), byStudent.get(s.id) || []);
         total += totals.expected;
         collected += totals.paid;
         pending += totals.due;
@@ -545,6 +578,7 @@ export class PaymentsService {
         where: { schoolId, deletedAt: null, section: { classId } },
         select: {
           id: true, rollNumber: true, registrationNo: true, fatherName: true, motherName: true,
+          isActive: true, billedUntilMonth: true,
           transportAllotted: true, transportRoute: true, transportMonths: true,
           user: { select: { firstName: true, lastName: true, phone: true } },
           section: { select: { name: true, class: { select: { name: true } } } },
@@ -571,7 +605,7 @@ export class PaymentsService {
 
     return students.map((s) => {
       const pmts = byStudent.get(s.id) || [];
-      const allStructures = this.withTransport(structures, routeMap, s);
+      const allStructures = this.capStructuresForStudent(this.withTransport(structures, routeMap, s), s);
       const { totals } = this.computeLedger(allStructures, pmts);
 
       // Last payment: latest receipt (grouped by receiptNo) by paid date.
@@ -646,6 +680,7 @@ export class PaymentsService {
         where: { schoolId, deletedAt: null, section: { classId } },
         select: {
           id: true, rollNumber: true, registrationNo: true, fatherName: true, admissionDate: true,
+          isActive: true, billedUntilMonth: true,
           transportAllotted: true, transportRoute: true, transportMonths: true,
           user: { select: { firstName: true, lastName: true, phone: true } },
           section: { select: { name: true, class: { select: { name: true } } } },
@@ -675,7 +710,7 @@ export class PaymentsService {
     const monthEnd = md ? new Date(md.getFullYear(), md.getMonth() + 1, 0, 23, 59, 59, 999) : null;
 
     return students.map((s) => {
-      const rows = this.buildInstallmentRows(this.withTransport(structures, routeMap, s), byStudent.get(s.id) || [], (s as any).admissionDate);
+      const rows = this.buildInstallmentRows(this.capStructuresForStudent(this.withTransport(structures, routeMap, s), s), byStudent.get(s.id) || [], (s as any).admissionDate);
       let previousDue = 0;
       let currentDue = 0;
       const lines: { name: string; month: string; amount: number }[] = [];

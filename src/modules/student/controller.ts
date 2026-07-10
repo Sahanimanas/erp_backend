@@ -76,12 +76,13 @@ export class StudentController {
       const admissionFrom = req.query.admissionFrom as string | undefined;
       const admissionTo = req.query.admissionTo as string | undefined;
       const fatherName = req.query.fatherName as string | undefined;
+      const status = req.query.status as string | undefined; // 'active' | 'inactive'
 
       if (!schoolId) {
         return void errorResponse(res, 400, 'School ID required');
       }
 
-      const result = await studentService.listStudents(schoolId, page, limit, sectionId, search, classId, admissionFrom, admissionTo, fatherName);
+      const result = await studentService.listStudents(schoolId, page, limit, sectionId, search, classId, admissionFrom, admissionTo, fatherName, status);
       paginatedResponse(res, result.data, page, limit, result.pagination.total);
     } catch (error: any) {
       errorResponse(res, 400, error.message || 'Failed to list students');
@@ -127,8 +128,9 @@ export class StudentController {
         return void errorResponse(res, 400, 'Required fields missing');
       }
 
-      await studentService.deactivateStudent(schoolId, studentId);
-      successResponse(res, 200, null, 'Student deactivated successfully');
+      const { billedUntilMonth, leftDate } = req.body ?? {};
+      const result = await studentService.deactivateStudent(schoolId, studentId, { billedUntilMonth, leftDate });
+      successResponse(res, 200, result, 'Student marked inactive successfully');
     } catch (error: any) {
       const statusCode = error.message.includes('not found') ? 404 : 400;
       errorResponse(res, statusCode, error.message || 'Failed to deactivate student');
