@@ -30,6 +30,19 @@ export class WhatsAppController {
     }
   }
 
+  /** Durable message counts (totals + per-day breakdown + live queue health). */
+  async stats(req: Request, res: Response): Promise<void> {
+    try {
+      const schoolId = req.user?.schoolId;
+      if (!schoolId) return void errorResponse(res, 400, 'Authentication required');
+
+      const days = Math.min(90, Math.max(1, parseInt(String(req.query.days ?? '14'), 10) || 14));
+      successResponse(res, 200, await whatsappService.getStats(schoolId, days));
+    } catch (error: any) {
+      errorResponse(res, 400, error.message || 'Failed to fetch message counts');
+    }
+  }
+
   /** Request an 8-digit pairing code instead of scanning a QR. */
   async pairingCode(req: Request, res: Response): Promise<void> {
     try {

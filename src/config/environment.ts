@@ -101,6 +101,19 @@ export const config = {
     sessionDir: resolveBackendPath(process.env.WHATSAPP_SESSION_DIR || 'storage/whatsapp'),
     // Friendly device name shown in WhatsApp → Linked Devices.
     deviceName: process.env.WHATSAPP_DEVICE_NAME || 'School ERP',
+    // Anti-ban throttling — one serial send queue per linked number. During a
+    // burst (bulk / broadcast) each send is spaced a RANDOM gap in this range
+    // apart; lone interactive sends after an idle period are not delayed.
+    minSendDelayMs: parseInt(process.env.WHATSAPP_MIN_SEND_DELAY_MS || '3000', 10),
+    maxSendDelayMs: parseInt(process.env.WHATSAPP_MAX_SEND_DELAY_MS || '10000', 10),
+    // Number of concurrent sends per account (WhatsApp tolerates 1–2; keep low).
+    sendConcurrency: parseInt(process.env.WHATSAPP_SEND_CONCURRENCY || '1', 10),
+    // Exponential backoff for a failed send: base * 2^attempt (+ jitter), capped.
+    sendRetries: parseInt(process.env.WHATSAPP_SEND_RETRIES || '3', 10),
+    sendRetryBaseMs: parseInt(process.env.WHATSAPP_SEND_RETRY_BASE_MS || '2000', 10),
+    // Exponential backoff for reconnecting a dropped socket (never deletes creds).
+    reconnectBaseMs: parseInt(process.env.WHATSAPP_RECONNECT_BASE_MS || '2000', 10),
+    reconnectMaxMs: parseInt(process.env.WHATSAPP_RECONNECT_MAX_MS || '60000', 10),
   },
 
   // Domain

@@ -57,4 +57,28 @@ router.get('/school', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * Public platform statistics for the marketing landing page — aggregate,
+ * non-sensitive counts across all tenants. No auth (shown before login).
+ *
+ *   GET /api/v1/public/stats
+ *   → { schools, students, employees, parents }
+ *
+ * `schools` excludes the internal "platform" tenant and any soft-deleted rows.
+ */
+router.get('/stats', async (_req: Request, res: Response) => {
+  try {
+    const [schools, students, employees, parents] = await Promise.all([
+      db.school.count({ where: { deletedAt: null, slug: { not: 'platform' } } }),
+      db.student.count({ where: { deletedAt: null } }),
+      db.employee.count({ where: { deletedAt: null } }),
+      db.parent.count({ where: { deletedAt: null } }),
+    ]);
+    return void successResponse(res, 200, { schools, students, employees, parents }, 'Platform stats');
+  } catch {
+    // Never block the landing page — return zeros so the UI can fall back.
+    return void successResponse(res, 200, { schools: 0, students: 0, employees: 0, parents: 0 }, 'Stats unavailable');
+  }
+});
+
 export default router;

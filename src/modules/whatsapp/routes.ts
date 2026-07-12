@@ -18,6 +18,10 @@ router.get('/status', requireAuth, adminOnly, async (req, res) => {
   await whatsappController.status(req, res);
 });
 
+router.get('/stats', requireAuth, adminOnly, async (req, res) => {
+  await whatsappController.stats(req, res);
+});
+
 router.post('/pairing-code', requireAuth, adminOnly, async (req, res) => {
   await whatsappController.pairingCode(req, res);
 });

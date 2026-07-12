@@ -7,6 +7,25 @@ export interface WhatsAppSessionState {
   /** Linked number once connected (country code + number, digits only). */
   number?: string;
   lastError?: string;
+  /** Live send-queue / delivery health for monitoring dashboards. */
+  health?: WhatsAppHealth;
+}
+
+export interface WhatsAppHealth {
+  /** Messages waiting in this account's serial send queue. */
+  queued: number;
+  /** Total accepted by the WhatsApp server since the socket came up. */
+  sent: number;
+  /** Delivered acknowledgements received (double tick). */
+  delivered: number;
+  /** Read acknowledgements received (blue tick). */
+  read: number;
+  /** Sends that exhausted their retries, or messages the server rejected. */
+  failed: number;
+  /** How many times the socket has auto-reconnected since it was linked. */
+  reconnects: number;
+  /** ISO timestamp of the last successful send (server-accepted). */
+  lastSentAt?: string;
 }
 
 export type MediaType = 'image' | 'video' | 'audio' | 'document';
