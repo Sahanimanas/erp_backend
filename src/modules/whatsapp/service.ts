@@ -902,7 +902,24 @@ class WhatsAppService {
     if (trimmed.endsWith('@g.us')) return trimmed;
     const digits = trimmed.replace(/\D/g, '');
     if (!digits) throw new Error(`Invalid recipient: ${to}`);
-    return `${digits}@s.whatsapp.net`;
+    return `${this.withCountryCode(digits)}@s.whatsapp.net`;
+  }
+
+  /**
+   * Ensure a recipient's digits carry the India country code (91). Numbers are
+   * usually stored as bare 10-digit mobiles, which WhatsApp silently drops —
+   * messages appear "sent" from our side but never reach the recipient. Prefix
+   * 91 unless the number already includes a country code.
+   */
+  private withCountryCode(digits: string): string {
+    // Bare 10-digit Indian mobile (starts 6–9): add the country code.
+    if (digits.length === 10 && /^[6-9]/.test(digits)) return `91${digits}`;
+    // Local trunk-prefixed form "0XXXXXXXXXX": drop the 0, add the country code.
+    if (digits.length === 11 && digits.startsWith('0') && /^0[6-9]/.test(digits)) {
+      return `91${digits.slice(1)}`;
+    }
+    // Already 91-prefixed, or some other country's fully-qualified number.
+    return digits;
   }
 
   private clearAuthDir(schoolId: string): void {
