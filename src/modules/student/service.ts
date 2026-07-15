@@ -357,18 +357,24 @@ export class StudentService {
     if (status === 'active') where.isActive = true;
     else if (status === 'inactive') where.isActive = false;
 
-    if (search) {
-      where.OR = [
-        { user: { firstName: { contains: search, mode: 'insensitive' } } },
-        { user: { lastName: { contains: search, mode: 'insensitive' } } },
-        { user: { email: { contains: search, mode: 'insensitive' } } },
-        { user: { phone: { contains: search } } },
-        { rollNumber: { contains: search, mode: 'insensitive' } },
-        { admissionNumber: { contains: search, mode: 'insensitive' } },
-        { registrationNo: { contains: search, mode: 'insensitive' } },
-        { fatherName: { contains: search, mode: 'insensitive' } },
-        { motherName: { contains: search, mode: 'insensitive' } },
-      ];
+    // Each whitespace-separated term must match somewhere, so a full name like
+    // "Aarav Sharma" matches firstName="Aarav" + lastName="Sharma", and
+    // "Aarav Rajesh" matches the child's name + the father's name.
+    const terms = search ? search.trim().split(/\s+/).filter(Boolean) : [];
+    if (terms.length) {
+      where.AND = terms.map((term) => ({
+        OR: [
+          { user: { firstName: { contains: term, mode: 'insensitive' } } },
+          { user: { lastName: { contains: term, mode: 'insensitive' } } },
+          { user: { email: { contains: term, mode: 'insensitive' } } },
+          { user: { phone: { contains: term } } },
+          { rollNumber: { contains: term, mode: 'insensitive' } },
+          { admissionNumber: { contains: term, mode: 'insensitive' } },
+          { registrationNo: { contains: term, mode: 'insensitive' } },
+          { fatherName: { contains: term, mode: 'insensitive' } },
+          { motherName: { contains: term, mode: 'insensitive' } },
+        ],
+      }));
     }
 
     // Admission-date range filter (inclusive). Date-only strings are coerced.
