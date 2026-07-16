@@ -10,14 +10,33 @@ export class FeeMgmtService {
     return db.classFeeType.findMany({ where, orderBy: { createdAt: 'asc' } });
   }
 
+  /**
+   * The `@@unique([schoolId, name])` index counts SOFT-DELETED rows too, so a
+   * previously-deleted fee type keeps squatting on its name and blocks any
+   * active row from taking it (create or rename → P2002). Deleted rows are
+   * invisible to users, so free the name by tombstoning theirs (append their
+   * unique id) before the active row claims it. Non-destructive: only renames
+   * already-deleted records.
+   */
+  private async freeSoftDeletedName(schoolId: string, name: string, exceptId?: string) {
+    const dead = await db.classFeeType.findMany({
+      where: { schoolId, name, deletedAt: { not: null }, ...(exceptId ? { id: { not: exceptId } } : {}) },
+    });
+    for (const row of dead) {
+      await db.classFeeType.update({ where: { id: row.id }, data: { name: `${row.name} [deleted ${row.id}]` } });
+    }
+  }
+
   async createFeeType(schoolId: string, data: any) {
-    if (!data.name) throw new Error('Fee type name is required');
-    const exists = await db.classFeeType.findFirst({ where: { schoolId, name: data.name, deletedAt: null } });
+    const name = String(data.name ?? '').trim();
+    if (!name) throw new Error('Fee type name is required');
+    const exists = await db.classFeeType.findFirst({ where: { schoolId, name, deletedAt: null } });
     if (exists) throw new Error('A fee type with this name already exists');
+    await this.freeSoftDeletedName(schoolId, name);
     return db.classFeeType.create({
       data: {
         schoolId,
-        name: data.name.trim(),
+        name,
         frequency: data.frequency || 'Monthly',
         months: Array.isArray(data.months) ? data.months : [],
         incomeHead: data.incomeHead || null,
@@ -30,17 +49,30 @@ export class FeeMgmtService {
   async updateFeeType(schoolId: string, id: string, data: any) {
     const ft = await db.classFeeType.findFirst({ where: { id, schoolId } });
     if (!ft) throw new Error('Fee type not found');
-    return db.classFeeType.update({
-      where: { id },
-      data: {
-        name: data.name ?? ft.name,
-        frequency: data.frequency ?? ft.frequency,
-        months: Array.isArray(data.months) ? data.months : ft.months,
-        incomeHead: data.incomeHead ?? ft.incomeHead,
-        enabled: data.enabled ?? ft.enabled,
-        isTransport: data.isTransport ?? ft.isTransport,
-      },
-    });
+
+    const patch: any = {
+      frequency: data.frequency ?? ft.frequency,
+      months: Array.isArray(data.months) ? data.months : ft.months,
+      incomeHead: data.incomeHead ?? ft.incomeHead,
+      enabled: data.enabled ?? ft.enabled,
+      isTransport: data.isTransport ?? ft.isTransport,
+    };
+
+    // Only touch the name when it actually changes, and guard the unique index:
+    // an ACTIVE clash is a real duplicate (friendly error); a SOFT-DELETED clash
+    // is a tombstone we can release so the rename goes through.
+    if (data.name !== undefined && data.name !== null) {
+      const name = String(data.name).trim();
+      if (!name) throw new Error('Fee type name is required');
+      if (name !== ft.name) {
+        const clash = await db.classFeeType.findFirst({ where: { schoolId, name, deletedAt: null, id: { not: id } } });
+        if (clash) throw new Error(`A fee type named "${name}" already exists`);
+        await this.freeSoftDeletedName(schoolId, name, id);
+      }
+      patch.name = name;
+    }
+
+    return db.classFeeType.update({ where: { id }, data: patch });
   }
 
   async deleteFeeType(schoolId: string, id: string) {

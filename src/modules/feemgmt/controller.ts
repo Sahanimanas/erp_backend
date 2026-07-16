@@ -5,8 +5,16 @@ import { successResponse, errorResponse, createdResponse, deletedResponse } from
 const codeFor = (e: any) => {
   const m = String(e?.message || '');
   if (m.includes('not found')) return 404;
-  if (m.includes('already')) return 409;
+  if (m.includes('already') || m.includes('Unique constraint')) return 409;
   return 400;
+};
+
+/** Never surface raw Prisma invocation text to the user. */
+const msgFor = (e: any) => {
+  const m = String(e?.message || 'Something went wrong');
+  if (m.includes('Unique constraint')) return 'A fee type with this name already exists';
+  if (m.includes('Invalid `prisma')) return 'Could not save — please check the details and try again';
+  return m;
 };
 
 export class FeeMgmtController {
@@ -23,14 +31,14 @@ export class FeeMgmtController {
     try {
       const data = await feeMgmtService.createFeeType(req.user!.schoolId, req.body);
       createdResponse(res, data, 'Fee type created');
-    } catch (e: any) { errorResponse(res, codeFor(e), e.message); }
+    } catch (e: any) { errorResponse(res, codeFor(e), msgFor(e)); }
   }
 
   async updateFeeType(req: Request, res: Response): Promise<void> {
     try {
       const data = await feeMgmtService.updateFeeType(req.user!.schoolId, req.params.id, req.body);
       successResponse(res, 200, data, 'Fee type updated');
-    } catch (e: any) { errorResponse(res, codeFor(e), e.message); }
+    } catch (e: any) { errorResponse(res, codeFor(e), msgFor(e)); }
   }
 
   async deleteFeeType(req: Request, res: Response): Promise<void> {
