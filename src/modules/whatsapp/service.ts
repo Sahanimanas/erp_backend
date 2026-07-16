@@ -4,12 +4,15 @@ import QRCode from 'qrcode';
 import pino from 'pino';
 import makeWASocket, {
   useMultiFileAuthState,
+  makeCacheableSignalKeyStore,
   fetchLatestBaileysVersion,
   DisconnectReason,
   Browsers,
   isJidGroup,
   type WASocket,
   type AnyMessageContent,
+  type WAMessageContent,
+  type WAMessageKey,
 } from '@whiskeysockets/baileys';
 import { config } from '@config/environment';
 import { db } from '@common/database/client';
@@ -89,7 +92,18 @@ interface Session {
 
   /** Live delivery / reliability counters for monitoring. */
   metrics: SessionMetrics;
+
+  /**
+   * Recently-sent messages, keyed by message id (bounded, FIFO-evicted).
+   * Baileys' `getMessage` reads from here to answer a recipient's retry
+   * receipt by re-encrypting the original content — without it, a message the
+   * recipient failed to decrypt stays stuck as "Waiting for this message".
+   */
+  sentMessages: Map<string, WAMessageContent>;
 }
+
+/** Cap on cached sent messages per school, to bound memory for retry replays. */
+const SENT_CACHE_LIMIT = 1000;
 
 // Baileys is noisy; route its logs through a silent pino instance.
 const logger = pino({ level: 'silent' });
@@ -251,6 +265,7 @@ class WhatsAppService {
         nextSlotAt: 0,
         reconnectAttempts: 0,
         metrics: { sent: 0, delivered: 0, read: 0, failed: 0, reconnects: 0 },
+        sentMessages: new Map(),
       };
       this.sessions.set(schoolId, session);
     }
@@ -329,13 +344,31 @@ class WhatsAppService {
 
     sock = makeWASocket({
       version,
-      auth: auth.state,
+      auth: {
+        creds: auth.state.creds,
+        // Cache the Signal key store in memory instead of hitting disk on
+        // every read/write. This removes the read/write races in the raw file
+        // store that corrupt session keys and leave recipients unable to
+        // decrypt — the "Waiting for this message" symptom — and cuts the disk
+        // churn that was contributing to unexpected logouts.
+        keys: makeCacheableSignalKeyStore(auth.state.keys, logger),
+      },
       logger,
       printQRInTerminal: false,
       browser: Browsers.appropriate(config.whatsapp.deviceName),
       // Don't sync full message history — we only send.
       syncFullHistory: false,
       markOnlineOnConnect: false,
+      // When a recipient can't decrypt a message it asks the sender to resend
+      // (a "retry receipt"). Baileys can only honour that if it can look the
+      // original content back up — so we serve it from our sent-message cache.
+      // Without this the message is never re-encrypted and stays stuck on the
+      // recipient's phone as "Waiting for this message".
+      getMessage: async (key: WAMessageKey): Promise<WAMessageContent | undefined> => {
+        const id = key?.id;
+        if (!id) return undefined;
+        return session.sentMessages.get(id);
+      },
     });
 
     session.sock = sock;
@@ -818,6 +851,20 @@ class WhatsAppService {
     });
   }
 
+  /**
+   * Cache a sent message's content by id so `getMessage` can replay it for a
+   * retry receipt. Bounded and FIFO-evicted so a long-running process with many
+   * broadcasts never grows this map without limit.
+   */
+  private rememberSentMessage(session: Session, id: string, content: WAMessageContent): void {
+    session.sentMessages.set(id, content);
+    while (session.sentMessages.size > SENT_CACHE_LIMIT) {
+      const oldest = session.sentMessages.keys().next().value;
+      if (oldest === undefined) break;
+      session.sentMessages.delete(oldest);
+    }
+  }
+
   /** Spin up drain workers up to the configured per-account concurrency (1–2). */
   private ensureWorkers(schoolId: string, session: Session): void {
     const target = Math.max(1, config.whatsapp.sendConcurrency || 1);
@@ -852,6 +899,12 @@ class WhatsAppService {
       try {
         const live = await this.ensureConnected(schoolId);
         const sent = await live.sock!.sendMessage(task.jid, task.content);
+        // Keep the encrypted content around so a retry receipt can be answered
+        // (see the `getMessage` handler) — otherwise the recipient is stuck on
+        // "Waiting for this message" whenever the first delivery fails to decrypt.
+        if (sent?.key?.id && sent.message) {
+          this.rememberSentMessage(session, sent.key.id, sent.message);
+        }
         session.metrics.sent += 1;
         session.metrics.lastSentAt = Date.now();
         this.bumpStat(schoolId, 'sent');
