@@ -106,6 +106,11 @@ export const config = {
     // apart; lone interactive sends after an idle period are not delayed.
     minSendDelayMs: parseInt(process.env.WHATSAPP_MIN_SEND_DELAY_MS || '3000', 10),
     maxSendDelayMs: parseInt(process.env.WHATSAPP_MAX_SEND_DELAY_MS || '10000', 10),
+    // Bulk / broadcast sends are spaced much wider (≈1 min, jittered) so a large
+    // run looks human and avoids the rate-based failures WhatsApp throws when a
+    // number fires many messages/PDFs back-to-back.
+    bulkMinSendDelayMs: parseInt(process.env.WHATSAPP_BULK_MIN_SEND_DELAY_MS || '60000', 10),
+    bulkMaxSendDelayMs: parseInt(process.env.WHATSAPP_BULK_MAX_SEND_DELAY_MS || '75000', 10),
     // Number of concurrent sends per account (WhatsApp tolerates 1–2; keep low).
     sendConcurrency: parseInt(process.env.WHATSAPP_SEND_CONCURRENCY || '1', 10),
     // Exponential backoff for a failed send: base * 2^attempt (+ jitter), capped.

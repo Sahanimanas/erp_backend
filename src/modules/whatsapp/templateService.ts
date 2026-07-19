@@ -84,7 +84,7 @@ export class WhatsAppTemplateService {
 export async function broadcastToStudents(
   schoolId: string,
   data: { message: string; classId?: string; sectionId?: string; studentIds?: string[] }
-): Promise<{ recipients: number; sent: number; failed: number; skippedNoPhone: number }> {
+): Promise<{ recipients: number; queued: number; skippedNoPhone: number }> {
   if (!data.message?.trim()) throw new Error('Message is required');
 
   const where: any = { schoolId, deletedAt: null };
@@ -102,9 +102,10 @@ export async function broadcastToStudents(
   const skippedNoPhone = students.length - students.filter((s) => s.user?.phone).length;
   if (!phones.length) throw new Error('None of the selected students have a phone number');
 
-  const results = await whatsappService.sendBulk(schoolId, phones, { text: data.message });
-  const sent = results.filter((r) => r.success).length;
-  return { recipients: phones.length, sent, failed: phones.length - sent, skippedNoPhone };
+  // Fire-and-forget: queue everyone and return right away. The queue sends them
+  // ≈1 min apart in the background, so a big class never holds the request open.
+  const { queued } = whatsappService.enqueueBulk(schoolId, phones, { text: data.message });
+  return { recipients: phones.length, queued, skippedNoPhone };
 }
 
 export default new WhatsAppTemplateService();

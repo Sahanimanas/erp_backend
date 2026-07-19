@@ -75,12 +75,12 @@ export class WhatsAppController {
   async sendText(req: Request, res: Response): Promise<void> {
     try {
       const schoolId = req.user?.schoolId;
-      const { to, message } = req.body;
-      
+      const { to, message, bulk } = req.body;
+
       if (!schoolId) return void errorResponse(res, 400, 'Authentication required');
       if (!to || !message) return void errorResponse(res, 400, '"to" and "message" are required');
 
-      const messageId = await whatsappService.sendText(schoolId, to, message);
+      const messageId = await whatsappService.sendText(schoolId, to, message, !!bulk);
       successResponse(res, 200, { to, messageId }, 'Message sent');
     } catch (error: any) {
       // console.error('Error sending WhatsApp message:', error);
@@ -120,9 +120,10 @@ export class WhatsAppController {
         ? { text: message }
         : this.buildMediaContent(media);
 
-      const results = await whatsappService.sendBulk(schoolId, recipients, content);
-      const sent = results.filter((r) => r.success).length;
-      successResponse(res, 200, { sent, failed: results.length - sent, results }, 'Bulk send complete');
+      // Fire-and-forget: queue all recipients and return at once; the queue paces
+      // them ≈1 min apart in the background (holding the request would time out).
+      const { queued, invalid } = whatsappService.enqueueBulk(schoolId, recipients, content);
+      successResponse(res, 200, { recipients: recipients.length, queued, invalid }, `Queued ${queued} number(s) — sending about one per minute`);
     } catch (error: any) {
       errorResponse(res, 400, error.message || 'Failed to send bulk messages');
     }
@@ -132,7 +133,7 @@ export class WhatsAppController {
   async broadcast(req: Request, res: Response): Promise<void> {
     try {
       const result = await broadcastToStudents(req.user!.schoolId, req.body);
-      successResponse(res, 200, result, `Sent to ${result.sent} of ${result.recipients} number(s)`);
+      successResponse(res, 200, result, `Queued ${result.queued} of ${result.recipients} number(s) — sending about one per minute`);
     } catch (error: any) { errorResponse(res, 400, error.message || 'Broadcast failed'); }
   }
 

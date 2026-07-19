@@ -33,6 +33,8 @@ export type MediaType = 'image' | 'video' | 'audio' | 'document';
 export interface SendTextRequest {
   to: string;
   message: string;
+  /** Pace this send with the wide bulk delay (≈1 min) instead of the fast one. */
+  bulk?: boolean;
 }
 
 export interface SendMediaRequest {
@@ -47,6 +49,8 @@ export interface SendMediaRequest {
   filename?: string;
   /** MIME type (required for audio/document when sending raw bytes). */
   mimetype?: string;
+  /** Pace this send with the wide bulk delay (≈1 min) instead of the fast one. */
+  bulk?: boolean;
 }
 
 export interface SendBulkRequest {

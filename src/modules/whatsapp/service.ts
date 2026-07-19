@@ -39,6 +39,8 @@ interface QueueTask {
   jid: string;
   content: AnyMessageContent;
   attempts: number;
+  /** Pace with the wide bulk delay (≈1 min) instead of the fast interactive one. */
+  bulk?: boolean;
   resolve: (id: string | undefined) => void;
   reject: (err: Error) => void;
 }
@@ -720,8 +722,10 @@ class WhatsAppService {
   // ── Sending ──────────────────────────────────────────────────────────────
 
   /** Send a plain-text message to a single recipient. */
-  async sendText(schoolId: string, to: string, text: string): Promise<string | undefined> {
-    return this.send(schoolId, to, { text });
+  async sendText(schoolId: string, to: string, text: string, bulk = false): Promise<string | undefined> {
+    // Bulk → queue and return at once; interactive → send and wait for the id.
+    if (bulk) { this.enqueue(schoolId, to, { text }); return undefined; }
+    return this.send(schoolId, to, { text }, false);
   }
 
   /**
@@ -758,37 +762,10 @@ class WhatsAppService {
         throw new Error(`Unsupported media type: ${mediaType}`);
     }
 
-    return this.send(schoolId, to, content);
-  }
-
-  /**
-   * Send the same content to many recipients, one by one. Returns a per-
-   * recipient result so the caller can report partial failures.
-   */
-  async sendBulk(
-    schoolId: string,
-    recipients: string[],
-    content: AnyMessageContent
-  ): Promise<Array<{ to: string; success: boolean; messageId?: string; error?: string }>> {
-    // Enqueue every recipient at once and let the per-account queue pace them
-    // (randomized 3–10s spacing, concurrency 1–2, exponential-backoff retries).
-    // `send` validates the recipient synchronously, so guard that throw here so
-    // one bad number can't abort the whole broadcast.
-    const settled = await Promise.allSettled(
-      recipients.map((to) => {
-        try {
-          return this.send(schoolId, to, content);
-        } catch (error) {
-          return Promise.reject(error);
-        }
-      })
-    );
-
-    return settled.map((result, i) =>
-      result.status === 'fulfilled'
-        ? { to: recipients[i], success: true, messageId: result.value }
-        : { to: recipients[i], success: false, error: result.reason?.message || 'Send failed' }
-    );
+    // Bulk media (e.g. "Send All" demand-bill PDFs) → queue and return at once,
+    // so the request never times out waiting on the ≈1-min bulk pacing.
+    if (req.bulk) { this.enqueue(schoolId, to, content); return undefined; }
+    return this.send(schoolId, to, content, false);
   }
 
   /**
@@ -838,7 +815,8 @@ class WhatsAppService {
   private send(
     schoolId: string,
     to: string,
-    content: AnyMessageContent
+    content: AnyMessageContent,
+    bulk = false
   ): Promise<string | undefined> {
     // Validate the recipient synchronously so bad numbers fail fast (and never
     // occupy a queue slot / burn a throttle delay).
@@ -846,9 +824,46 @@ class WhatsAppService {
     const session = this.getOrInit(schoolId);
 
     return new Promise<string | undefined>((resolve, reject) => {
-      session.queue.push({ jid, content, attempts: 0, resolve, reject });
+      const task: QueueTask = { jid, content, attempts: 0, bulk, resolve, reject };
+      // Interactive sends jump AHEAD of a running bulk batch, so a single receipt
+      // never has to wait behind a whole class of demand bills. Bulk goes to the
+      // back and is paced ≈1 min apart.
+      if (bulk) session.queue.push(task);
+      else session.queue.unshift(task);
       this.ensureWorkers(schoolId, session);
     });
+  }
+
+  /**
+   * Fire-and-forget enqueue: queues a bulk send and returns immediately instead
+   * of holding the HTTP request until it lands. With ≈1-min bulk spacing a whole
+   * class would otherwise hold the request for many minutes and trip the client
+   * / proxy timeout (which is exactly why bulk "failed"). The queue paces and
+   * retries in the background; outcomes are recorded in the session metrics.
+   */
+  private enqueue(schoolId: string, to: string, content: AnyMessageContent): void {
+    // send() validates the number synchronously (throws for a bad one) before
+    // queuing; we deliberately don't await the returned promise.
+    void this.send(schoolId, to, content, true).catch(() => { /* tracked in metrics */ });
+  }
+
+  /**
+   * Queue the same content to many recipients (fire-and-forget). Returns the
+   * count accepted onto the queue right away; the send itself happens in the
+   * background, one message ≈every minute.
+   */
+  enqueueBulk(schoolId: string, recipients: string[], content: AnyMessageContent): { queued: number; invalid: number } {
+    let queued = 0;
+    let invalid = 0;
+    for (const to of recipients) {
+      try {
+        this.enqueue(schoolId, to, content);
+        queued += 1;
+      } catch {
+        invalid += 1; // rejected synchronously (e.g. not a valid number)
+      }
+    }
+    return { queued, invalid };
   }
 
   /**
@@ -893,7 +908,7 @@ class WhatsAppService {
    * succeeds, exhausts its retries, or is rejected, and the worker moves on.
    */
   private async processTask(schoolId: string, session: Session, task: QueueTask): Promise<void> {
-    await this.awaitSendSlot(session);
+    await this.awaitSendSlot(session, task.bulk);
 
     for (;;) {
       try {
@@ -932,12 +947,14 @@ class WhatsAppService {
 
   /**
    * Block until this account's next send slot. Sends within a burst are spaced
-   * a RANDOM gap apart (config min–max, default 3–10s); a lone send after an
-   * idle period goes out immediately because the slot cursor is already past.
+   * a RANDOM gap apart; a lone send after an idle period goes out immediately
+   * because the slot cursor is already past. Interactive sends use the fast
+   * range (default 3–10s); bulk / broadcast sends use the wide range (≈1 min)
+   * so a large run never trips WhatsApp's rate limits.
    */
-  private async awaitSendSlot(session: Session): Promise<void> {
-    const min = Math.max(0, config.whatsapp.minSendDelayMs);
-    const max = Math.max(min, config.whatsapp.maxSendDelayMs);
+  private async awaitSendSlot(session: Session, bulk = false): Promise<void> {
+    const min = Math.max(0, bulk ? config.whatsapp.bulkMinSendDelayMs : config.whatsapp.minSendDelayMs);
+    const max = Math.max(min, bulk ? config.whatsapp.bulkMaxSendDelayMs : config.whatsapp.maxSendDelayMs);
     const gap = randomBetween(min, max);
 
     const now = Date.now();
