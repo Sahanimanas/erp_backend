@@ -81,4 +81,35 @@ router.get('/stats', async (_req: Request, res: Response) => {
   }
 });
 
+/**
+ * Public list of onboarded schools for the marketing site's "trusted by"
+ * marquee. Names and logos only — no contact details, no counts per school.
+ * No auth (shown before login).
+ *
+ *   GET /api/v1/public/schools
+ *   → { schools: [{ name, logo, city }], total }
+ *
+ * `total` is the full count so the heading can say "trusted by N schools" even
+ * though the list itself is capped. Filters match /public/stats exactly, so the
+ * marquee and the stats strip can never disagree.
+ */
+router.get('/schools', async (_req: Request, res: Response) => {
+  const where = { deletedAt: null, slug: { not: 'platform' } } as const;
+  try {
+    const [schools, total] = await Promise.all([
+      db.school.findMany({
+        where,
+        select: { name: true, logo: true, city: true },
+        orderBy: { createdAt: 'desc' },
+        take: 60, // enough to fill the marquee; keeps the payload small
+      }),
+      db.school.count({ where }),
+    ]);
+    return void successResponse(res, 200, { schools, total }, 'Public schools');
+  } catch {
+    // Never block the landing page — an empty list just hides the marquee.
+    return void successResponse(res, 200, { schools: [], total: 0 }, 'Schools unavailable');
+  }
+});
+
 export default router;
