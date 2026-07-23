@@ -1,155 +1,75 @@
 import { Request, Response } from 'express';
 import timetableService from './service';
-import { successResponse, errorResponse, createdResponse, deletedResponse } from '@common/utils/response';
+import { successResponse, errorResponse } from '@common/utils/response';
 
 export class TimetableController {
-  async createPeriod(req: Request, res: Response): Promise<void> {
-    try {
-      const schoolId = req.user?.schoolId;
-      const { name, startTime, endTime } = req.body;
-
-      if (!schoolId || !name || !startTime || !endTime) {
-        return void errorResponse(res, 400, 'Required fields missing');
-      }
-
-      const period = await timetableService.createPeriod(schoolId, req.body);
-      createdResponse(res, period, 'Period created successfully');
-    } catch (error: any) {
-      errorResponse(res, 400, error.message || 'Failed to create period');
-    }
-  }
-
-  async listPeriods(req: Request, res: Response): Promise<void> {
-    try {
-      const schoolId = req.user?.schoolId;
-
-      if (!schoolId) {
-        return void errorResponse(res, 400, 'School ID required');
-      }
-
-      const periods = await timetableService.listPeriods(schoolId);
-      successResponse(res, 200, periods);
-    } catch (error: any) {
-      errorResponse(res, 400, error.message || 'Failed to list periods');
-    }
-  }
-
-  async updatePeriod(req: Request, res: Response): Promise<void> {
-    try {
-      const schoolId = req.user?.schoolId;
-      const { periodId } = req.params;
-
-      if (!schoolId || !periodId) {
-        return void errorResponse(res, 400, 'Required fields missing');
-      }
-
-      const period = await timetableService.updatePeriod(schoolId, periodId, req.body);
-      successResponse(res, 200, period, 'Period updated successfully');
-    } catch (error: any) {
-      const statusCode = error.message.includes('not found') ? 404 : 400;
-      errorResponse(res, statusCode, error.message || 'Failed to update period');
-    }
-  }
-
-  async createTimetableSlot(req: Request, res: Response): Promise<void> {
-    try {
-      const schoolId = req.user?.schoolId;
-      const { sectionId, periodId, subjectId, day } = req.body;
-
-      if (!schoolId || !sectionId || !periodId || !subjectId || !day) {
-        return void errorResponse(res, 400, 'Required fields missing');
-      }
-
-      const slot = await timetableService.createTimetableSlot(schoolId, req.body);
-      createdResponse(res, slot, 'Timetable slot created successfully');
-    } catch (error: any) {
-      const statusCode = error.message.includes('not found') ? 404 : 409;
-      errorResponse(res, statusCode, error.message || 'Failed to create slot');
-    }
-  }
-
+  /** GET /timetable?sectionId=&session=&academicYearId= */
   async getSectionTimetable(req: Request, res: Response): Promise<void> {
     try {
       const schoolId = req.user?.schoolId;
-      const { sectionId } = req.params;
+      const { sectionId, session, academicYearId } = req.query as Record<string, string>;
+      if (!schoolId || !sectionId) return void errorResponse(res, 400, 'sectionId required');
 
-      if (!schoolId || !sectionId) {
-        return void errorResponse(res, 400, 'Required fields missing');
-      }
-
-      const timetable = await timetableService.getSectionTimetable(schoolId, sectionId);
-      successResponse(res, 200, timetable);
+      const data = await timetableService.getSectionTimetable(
+        schoolId,
+        sectionId,
+        session || 'DEFAULT',
+        academicYearId || null,
+      );
+      successResponse(res, 200, data);
     } catch (error: any) {
-      const statusCode = error.message.includes('not found') ? 404 : 400;
-      errorResponse(res, statusCode, error.message || 'Failed to fetch timetable');
+      errorResponse(res, 400, error.message || 'Failed to load timetable');
     }
   }
 
-  async getTeacherSchedule(req: Request, res: Response): Promise<void> {
+  /** POST /timetable */
+  async saveSectionTimetable(req: Request, res: Response): Promise<void> {
     try {
       const schoolId = req.user?.schoolId;
-      const { employeeId } = req.params;
+      if (!schoolId) return void errorResponse(res, 400, 'School ID required');
 
-      if (!schoolId || !employeeId) {
-        return void errorResponse(res, 400, 'Required fields missing');
-      }
-
-      const schedule = await timetableService.getTeacherSchedule(schoolId, employeeId);
-      successResponse(res, 200, schedule);
+      const data = await timetableService.saveSectionTimetable(schoolId, req.body);
+      successResponse(res, 200, data, 'Timetable saved');
     } catch (error: any) {
-      const statusCode = error.message.includes('not found') ? 404 : 400;
-      errorResponse(res, statusCode, error.message || 'Failed to fetch schedule');
+      errorResponse(res, 400, error.message || 'Failed to save timetable');
     }
   }
 
-  async updateTimetableSlot(req: Request, res: Response): Promise<void> {
+  /** GET /timetable/employee?employeeId=&session=&academicYearId= */
+  async getEmployeeTimetable(req: Request, res: Response): Promise<void> {
     try {
       const schoolId = req.user?.schoolId;
-      const { slotId } = req.params;
+      const { employeeId, session, academicYearId } = req.query as Record<string, string>;
+      if (!schoolId || !employeeId) return void errorResponse(res, 400, 'employeeId required');
 
-      if (!schoolId || !slotId) {
-        return void errorResponse(res, 400, 'Required fields missing');
-      }
-
-      const slot = await timetableService.updateTimetableSlot(schoolId, slotId, req.body);
-      successResponse(res, 200, slot, 'Timetable slot updated successfully');
+      const data = await timetableService.getEmployeeTimetable(
+        schoolId,
+        employeeId,
+        session || 'DEFAULT',
+        academicYearId || null,
+      );
+      successResponse(res, 200, data);
     } catch (error: any) {
-      const statusCode = error.message.includes('not found') ? 404 : 400;
-      errorResponse(res, statusCode, error.message || 'Failed to update slot');
+      errorResponse(res, 400, error.message || 'Failed to load employee timetable');
     }
   }
 
-  async deleteTimetableSlot(req: Request, res: Response): Promise<void> {
+  /** GET /timetable/session-day?day=&session=&academicYearId= */
+  async getSessionDayTimetable(req: Request, res: Response): Promise<void> {
     try {
       const schoolId = req.user?.schoolId;
-      const { slotId } = req.params;
+      const { day, session, academicYearId } = req.query as Record<string, string>;
+      if (!schoolId || !day) return void errorResponse(res, 400, 'day required');
 
-      if (!schoolId || !slotId) {
-        return void errorResponse(res, 400, 'Required fields missing');
-      }
-
-      await timetableService.deleteTimetableSlot(schoolId, slotId);
-      deletedResponse(res, 'Timetable slot deleted successfully');
+      const data = await timetableService.getSessionDayTimetable(
+        schoolId,
+        day,
+        session || 'DEFAULT',
+        academicYearId || null,
+      );
+      successResponse(res, 200, data);
     } catch (error: any) {
-      const statusCode = error.message.includes('not found') ? 404 : 400;
-      errorResponse(res, statusCode, error.message || 'Failed to delete slot');
-    }
-  }
-
-  async getClassSchedule(req: Request, res: Response): Promise<void> {
-    try {
-      const schoolId = req.user?.schoolId;
-      const { classId } = req.params;
-
-      if (!schoolId || !classId) {
-        return void errorResponse(res, 400, 'Required fields missing');
-      }
-
-      const schedule = await timetableService.getClassSchedule(schoolId, classId);
-      successResponse(res, 200, schedule);
-    } catch (error: any) {
-      const statusCode = error.message.includes('not found') ? 404 : 400;
-      errorResponse(res, statusCode, error.message || 'Failed to fetch schedule');
+      errorResponse(res, 400, error.message || 'Failed to load session timetable');
     }
   }
 }

@@ -364,6 +364,11 @@ model AcademicYear {
   startDate DateTime
   endDate   DateTime
   isActive  Boolean  @default(true)
+  // Class Management → Add Session extras
+  sessionCode      String?
+  timetableSession String? // DEFAULT | ONLINE
+  description      String?
+  enabled          Boolean @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -384,6 +389,13 @@ model Class {
   name            String
   description     String?
   classTeacherId  String?
+  // Class Management → Add Class extras
+  classCode       String?
+  classType       String?  // e.g. Yearly / Semester
+  classSequence   Int?
+  noOfSessions    Int      @default(1)
+  departmentId    String?
+  enabled         Boolean  @default(true)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   deletedAt       DateTime?
@@ -393,6 +405,7 @@ model Class {
   sections     Section[]
   classSubjects ClassSubject[]
   examSchedules ExamSchedule[]
+  classDetails  ClassDetail[]
 
   @@unique([schoolId, name])
   @@index([schoolId])
@@ -412,6 +425,7 @@ model Section {
   class    Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
   students Student[]
   timetableSlots TimetableSlot[]
+  classTimetables ClassTimetable[]
 
   @@unique([classId, name])
   @@index([classId])
@@ -424,6 +438,11 @@ model Subject {
   name      String
   code      String
   description String?
+  // Class Management → Add Subject extras
+  displayOrder Int     @default(0)
+  totalMarks   Int     @default(100)
+  passingMarks Int     @default(0)
+  enabled      Boolean @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   deletedAt DateTime?
@@ -667,6 +686,7 @@ model Employee {
   leaves          Leave[]
   payslips        Payslip[]
   experiences     EmployeeExperience[]
+  invigilations   ExamSchedule[]
 
   @@unique([schoolId, employeeCode])
   @@index([schoolId])
@@ -1133,31 +1153,39 @@ model Exam {
   @@index([type])
 }
 
-// One row per exam × class × subject: when/where the paper happens.
+// One row per paper: exam × class × subject × paperName. A subject may have
+// several papers in the same exam (e.g. Sanskrit "Theory" and Sanskrit "Oral"),
+// which is why paperName is part of the unique key.
 model ExamSchedule {
-  id        String   @id @default(cuid())
-  schoolId  String
-  examId    String
-  classId   String
-  subjectId String
-  examDate  DateTime
-  startTime String   @default("09:00")
-  endTime   String   @default("12:00")
-  room      String?
-  maxMarks  Int      @default(100)
-  minMarks  Int      @default(33)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            String   @id @default(cuid())
+  schoolId      String
+  examId        String
+  classId       String
+  subjectId     String
+  paperName     String   @default("Theory") // Theory | Oral | Practical | Main …
+  examDate      DateTime
+  startTime     String   @default("09:00")
+  endTime       String   @default("12:00")
+  room          String?
+  examCode      String?
+  invigilatorId String?
+  subSubject    Boolean  @default(false)
+  maxMarks      Int      @default(100)
+  minMarks      Int      @default(33) // pass / cut-off marks
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  exam       Exam             @relation(fields: [examId], references: [id], onDelete: Cascade)
-  class      Class            @relation(fields: [classId], references: [id], onDelete: Cascade)
-  subject    Subject          @relation(fields: [subjectId], references: [id], onDelete: Cascade)
-  attendance ExamAttendance[]
+  exam        Exam             @relation(fields: [examId], references: [id], onDelete: Cascade)
+  class       Class            @relation(fields: [classId], references: [id], onDelete: Cascade)
+  subject     Subject          @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  invigilator Employee?        @relation(fields: [invigilatorId], references: [id], onDelete: SetNull)
+  attendance  ExamAttendance[]
 
-  @@unique([examId, classId, subjectId])
+  @@unique([examId, classId, subjectId, paperName])
   @@index([schoolId])
   @@index([examId])
   @@index([classId])
+  @@index([invigilatorId])
 }
 
 model ExamHall {
@@ -1301,6 +1329,202 @@ model TimetableSlot {
   @@unique([schoolId, sectionId, periodId, day])
   @@index([schoolId])
   @@index([sectionId])
+}
+
+// Rich, video-style class timetable. ONE row per (section, timetableSession,
+// academicYear). `session` is the timetable-session toggle DEFAULT | ONLINE
+// (NOT the academic year). Cells carry their own start/end time, subject,
+// teacher (allotment) and optional online-class link — so the Add, View,
+// Teacher-Allotment, Employee and Session-Day pages all read this one source.
+model ClassTimetable {
+  id             String   @id @default(cuid())
+  schoolId       String
+  sectionId      String
+  session        String   @default("DEFAULT") // DEFAULT | ONLINE (timetable session)
+  academicYearId String?
+  maxPeriods     Int      @default(8)
+  completed      Boolean  @default(false)
+  classTeacherId String?  // Employee id
+  periodLabels   String[] @default([]) // editable column headers ("Period 1", "URDU", …)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  section Section              @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  cells   ClassTimetableCell[]
+
+  @@unique([schoolId, sectionId, session, academicYearId])
+  @@index([schoolId])
+  @@index([sectionId])
+}
+
+model ClassTimetableCell {
+  id          String   @id @default(cuid())
+  schoolId    String
+  timetableId String
+  day         String   // Monday … Saturday
+  periodIndex Int      // 0-based column position
+  startTime   String?
+  endTime     String?
+  subjectId   String?
+  teacherId   String?  // Employee id (allotment)
+  onlineLink  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  timetable ClassTimetable @relation(fields: [timetableId], references: [id], onDelete: Cascade)
+
+  @@unique([timetableId, day, periodIndex])
+  @@index([timetableId])
+  @@index([schoolId, day])
+  @@index([schoolId, teacherId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// CLASS MANAGEMENT (Add Class Details / Non-Subject / Syllabus / Emp mapping)
+// ─────────────────────────────────────────────────────────────────────────
+
+// Per-year detail of a class (a class may run over N "years"/semesters).
+model ClassDetail {
+  id                    String   @id @default(cuid())
+  schoolId              String
+  classId               String
+  yearIndex             Int      // 1-based "Year N"
+  name                  String?
+  classCode             String?
+  maxInternalExam       Int?
+  bestInternalExamCount Int?
+  noOfElectiveSubject   Int?
+  enabled               Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  class Class @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, yearIndex])
+  @@index([schoolId])
+  @@index([classId])
+}
+
+// Co-curricular / non-academic subjects (Music, Dance, …) scored separately.
+model NonSubject {
+  id           String   @id @default(cuid())
+  schoolId     String
+  classId      String?
+  name         String
+  totalMarks   Int      @default(100)
+  displayOrder Int      @default(0)
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([schoolId])
+  @@index([classId])
+}
+
+// Rich-text class syllabus with optional file attachments.
+model Syllabus {
+  id             String   @id @default(cuid())
+  schoolId       String
+  academicYearId String?
+  classId        String
+  sectionId      String?
+  title          String
+  content        String   @default("") // rich HTML
+  attachments    Json?    // [{ name, url }]
+  enabled        Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([schoolId])
+  @@index([classId])
+}
+
+// Which subjects / non-subjects an employee (teacher) is assigned for a class.
+model EmployeeSubjectMap {
+  id             String   @id @default(cuid())
+  schoolId       String
+  employeeId     String
+  classId        String
+  academicYearId String?
+  subjectId      String?
+  nonSubjectId   String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([schoolId])
+  @@index([employeeId])
+  @@index([classId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// RESULT MANAGEMENT (builds on Exam Management: StudentMark/Exam/GradingScale)
+// ─────────────────────────────────────────────────────────────────────────
+
+// Co-curricular (non-subject) result, graded per Term rather than per exam.
+model NonSubjectMark {
+  id           String   @id @default(cuid())
+  schoolId     String
+  studentId    String
+  nonSubjectId String
+  term         String
+  marks        Int?
+  grade        String?
+  remarks      String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([studentId, nonSubjectId, term])
+  @@index([schoolId])
+  @@index([studentId])
+}
+
+// Free-text remark shown on a student's report card (per session/term).
+model ReportCardRemark {
+  id             String   @id @default(cuid())
+  schoolId       String
+  studentId      String
+  academicYearId String?
+  term           String   @default("")
+  remark         String   @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([studentId, academicYearId, term])
+  @@index([schoolId])
+}
+
+// A generated report card snapshot (aggregated marks + remarks) for a student,
+// stored as JSON so View/Publish/Print render exactly what was generated.
+model GeneratedReportCard {
+  id             String   @id @default(cuid())
+  schoolId       String
+  studentId      String
+  sectionId      String?
+  academicYearId String?
+  term           String   @default("")
+  data           Json
+  published      Boolean  @default(false)
+  publishedAt    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([studentId, academicYearId, term])
+  @@index([schoolId])
+  @@index([sectionId])
+}
+
+// Publish state of an exam's results for a given section (controls parent/student
+// visibility). One row per (exam, section).
+model ExamResultPublish {
+  id          String   @id @default(cuid())
+  schoolId    String
+  examId      String
+  sectionId   String
+  published   Boolean  @default(true)
+  publishedAt DateTime @default(now())
+
+  @@unique([examId, sectionId])
+  @@index([schoolId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────

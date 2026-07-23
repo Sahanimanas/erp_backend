@@ -49,12 +49,20 @@ export class ExamMgmtService {
       include: {
         subject: { select: { id: true, name: true, code: true } },
         class: { select: { id: true, name: true } },
+        invigilator: {
+          select: { id: true, user: { select: { firstName: true, lastName: true } } },
+        },
       },
       orderBy: [{ examDate: 'asc' }, { startTime: 'asc' }],
     });
   }
 
-  /** Upsert schedule rows for one exam+class (one row per subject). */
+  /**
+   * Upsert schedule rows for one exam+class. A subject may carry several papers
+   * (Theory / Oral / …), so rows are keyed by subject + paperName; a row that
+   * already exists on the client sends its `id` and is updated in place, which
+   * is what lets a paper be renamed without leaving a duplicate behind.
+   */
   async saveSchedule(schoolId: string, examId: string, classId: string, items: any[]) {
     if (!classId) throw new Error('classId is required');
     if (!Array.isArray(items)) throw new Error('items[] required');
@@ -74,16 +82,37 @@ export class ExamMgmtService {
       if (examDate < windowStart || examDate > windowEnd) {
         throw new Error(`Paper dates must be within the exam window ${fmt(windowStart)} – ${fmt(windowEnd)}`);
       }
+      const paperName = String(it.paperName || '').trim() || 'Theory';
       const data = {
+        paperName,
         examDate,
         startTime: it.startTime || '09:00',
         endTime: it.endTime || '12:00',
         room: it.room || null,
+        examCode: it.examCode || null,
+        invigilatorId: it.invigilatorId || null,
+        subSubject: Boolean(it.subSubject),
         maxMarks: Number(it.maxMarks) || 100,
-        minMarks: Number(it.minMarks) || 33,
+        // 0 is a legitimate cut-off, so don't let `||` swallow it.
+        minMarks: Number.isFinite(Number(it.minMarks)) ? Number(it.minMarks) : 33,
       };
+
+      if (it.id) {
+        // Guard the tenant: only update a row that belongs to this school+exam.
+        const existing = await db.examSchedule.findFirst({
+          where: { id: it.id, schoolId, examId, classId },
+        });
+        if (existing) {
+          await db.examSchedule.update({ where: { id: existing.id }, data });
+          saved++;
+          continue;
+        }
+      }
+
       await db.examSchedule.upsert({
-        where: { examId_classId_subjectId: { examId, classId, subjectId: it.subjectId } },
+        where: {
+          examId_classId_subjectId_paperName: { examId, classId, subjectId: it.subjectId, paperName },
+        },
         update: data,
         create: { schoolId, examId, classId, subjectId: it.subjectId, ...data },
       });
@@ -254,7 +283,10 @@ export class ExamMgmtService {
       exam: { id: exam.id, name: exam.name, type: exam.type, startDate: exam.startDate, endDate: exam.endDate, session: exam.academicYear?.name ?? null },
       school,
       schedule: schedule.map((s) => ({
-        subject: s.subject?.name, examDate: s.examDate, startTime: s.startTime, endTime: s.endTime, room: s.room, maxMarks: s.maxMarks,
+        // Show the paper alongside the subject so "Sanskrit (Oral)" reads as its
+        // own line — a subject can have more than one paper in an exam.
+        subject: s.paperName && s.paperName !== 'Theory' ? `${s.subject?.name} (${s.paperName})` : s.subject?.name,
+        examDate: s.examDate, startTime: s.startTime, endTime: s.endTime, room: s.room, maxMarks: s.maxMarks,
       })),
       students: students.map((st) => {
         const seat = seatByStudent.get(st.id);

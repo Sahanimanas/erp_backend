@@ -4,52 +4,14 @@ import { requireAuth, requireRole } from '@common/middleware/auth';
 
 const router = Router();
 
-/**
- * Periods
- */
+// Section timetable — one shared record read by Add / View / Teacher-Allotment.
+router.get('/', requireAuth, (req, res) => timetableController.getSectionTimetable(req, res));
+router.post('/', requireAuth, requireRole('SCHOOL_ADMIN', 'PRINCIPAL'), (req, res) =>
+  timetableController.saveSectionTimetable(req, res),
+);
 
-router.post('/periods', requireAuth, requireRole('SCHOOL_ADMIN', 'PRINCIPAL'), async (req, res) => {
-  await timetableController.createPeriod(req, res);
-});
-
-router.get('/periods', requireAuth, async (req, res) => {
-  await timetableController.listPeriods(req, res);
-});
-
-router.put('/periods/:periodId', requireAuth, requireRole('SCHOOL_ADMIN', 'PRINCIPAL'), async (req, res) => {
-  await timetableController.updatePeriod(req, res);
-});
-
-/**
- * Timetable Slots
- */
-
-router.post('/slots', requireAuth, requireRole('SCHOOL_ADMIN', 'PRINCIPAL'), async (req, res) => {
-  await timetableController.createTimetableSlot(req, res);
-});
-
-router.put('/slots/:slotId', requireAuth, requireRole('SCHOOL_ADMIN', 'PRINCIPAL'), async (req, res) => {
-  await timetableController.updateTimetableSlot(req, res);
-});
-
-router.delete('/slots/:slotId', requireAuth, requireRole('SCHOOL_ADMIN', 'PRINCIPAL'), async (req, res) => {
-  await timetableController.deleteTimetableSlot(req, res);
-});
-
-/**
- * Timetable Views
- */
-
-router.get('/sections/:sectionId', requireAuth, async (req, res) => {
-  await timetableController.getSectionTimetable(req, res);
-});
-
-router.get('/teachers/:employeeId', requireAuth, async (req, res) => {
-  await timetableController.getTeacherSchedule(req, res);
-});
-
-router.get('/classes/:classId', requireAuth, async (req, res) => {
-  await timetableController.getClassSchedule(req, res);
-});
+// Cross-cutting views (declared as literal paths — no param collisions).
+router.get('/employee', requireAuth, (req, res) => timetableController.getEmployeeTimetable(req, res));
+router.get('/session-day', requireAuth, (req, res) => timetableController.getSessionDayTimetable(req, res));
 
 export default router;

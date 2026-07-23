@@ -118,31 +118,124 @@ export class ParentService {
     return parent;
   }
 
+  /**
+   * The parents list is the union of two sources:
+   *
+   *  1. `Parent` rows — guardians who have a real login account.
+   *  2. Guardians read straight off the student records (father / mother /
+   *     guardian name + mobile), for students with no Parent linked yet.
+   *
+   * Most schools capture guardian particulars during admission and never create
+   * separate parent logins, so source (2) is what keeps this page from looking
+   * empty. Derived rows carry `source: 'student'` and a synthetic `derived:*`
+   * id — they are read-only, there is no row in the DB behind them.
+   *
+   * Siblings collapse into one guardian: rows are keyed on the mobile number
+   * when there is one (digits only), otherwise on the lower-cased name.
+   */
   async listParents(schoolId: string, page = 1, limit = 10, search?: string) {
-    const skip = (page - 1) * limit;
-    const where: any = { schoolId };
-
-    if (search) {
-      where.OR = [
-        { user: { firstName: { contains: search, mode: 'insensitive' } } },
-        { user: { lastName: { contains: search, mode: 'insensitive' } } },
-        { user: { email: { contains: search, mode: 'insensitive' } } },
-        { user: { phone: { contains: search, mode: 'insensitive' } } },
-      ];
-    }
-
-    const [parents, total] = await Promise.all([
+    const [parents, students] = await Promise.all([
       db.parent.findMany({
-        where,
-        skip,
-        take: limit,
+        where: { schoolId, deletedAt: null },
         include: this.parentInclude(),
         orderBy: { createdAt: 'desc' },
       }),
-      db.parent.count({ where }),
+      db.student.findMany({
+        where: { schoolId, deletedAt: null, parents: { none: {} } },
+        select: {
+          id: true,
+          rollNumber: true,
+          fatherName: true,
+          motherName: true,
+          fatherOccupation: true,
+          motherOccupation: true,
+          guardianName: true,
+          guardianPhone: true,
+          guardianEmail: true,
+          user: { select: { firstName: true, lastName: true, phone: true, email: true } },
+          section: { select: { name: true, class: { select: { name: true } } } },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
     ]);
 
-    return { data: parents, pagination: { page, limit, total, pages: Math.ceil(total / limit) } };
+    const derived = new Map<string, any>();
+    for (const s of students) {
+      // Prefer an explicit guardian, else the father, else the mother.
+      let name = '';
+      let relationship = '';
+      let occupation: string | null = null;
+      if (s.guardianName?.trim()) {
+        name = s.guardianName.trim();
+        relationship = 'Guardian';
+        occupation = s.fatherOccupation || s.motherOccupation || null;
+      } else if (s.fatherName?.trim()) {
+        name = s.fatherName.trim();
+        relationship = 'Father';
+        occupation = s.fatherOccupation || null;
+      } else if (s.motherName?.trim()) {
+        name = s.motherName.trim();
+        relationship = 'Mother';
+        occupation = s.motherOccupation || null;
+      }
+
+      // The student's own contact number is the household's number when no
+      // separate guardian mobile was captured.
+      const phone = (s.guardianPhone || s.user?.phone || '').trim();
+      const email = (s.guardianEmail || '').trim();
+      if (!name && !phone) continue; // nothing worth listing
+
+      const digits = phone.replace(/\D/g, '');
+      const key = digits ? `p:${digits}` : `n:${name.toLowerCase()}`;
+      const child = {
+        id: s.id,
+        rollNumber: s.rollNumber,
+        user: s.user,
+        section: s.section,
+      };
+
+      const row = derived.get(key);
+      if (row) {
+        row.students.push(child);
+        // Fill in details a sibling's record happened to carry and this one didn't.
+        row.user.firstName ||= name;
+        row.user.phone ||= phone;
+        row.user.email ||= email;
+        row.occupation ||= occupation;
+        row.relationship ||= relationship;
+        continue;
+      }
+      derived.set(key, {
+        id: `derived:${key}`,
+        source: 'student',
+        relationship,
+        occupation: occupation || null,
+        annualIncome: null,
+        user: { id: null, firstName: name, lastName: '', email, phone, isActive: true },
+        students: [child],
+      });
+    }
+
+    const all = [
+      ...parents.map((p) => ({ ...p, source: 'parent' })),
+      ...derived.values(),
+    ];
+
+    // Search spans both sources, so it is applied after the merge rather than
+    // in the Parent query.
+    const q = search?.trim().toLowerCase();
+    const filtered = q
+      ? all.filter((r) =>
+          [r.user?.firstName, r.user?.lastName, r.user?.email, r.user?.phone]
+            .some((v) => String(v || '').toLowerCase().includes(q))
+        )
+      : all;
+
+    const skip = (page - 1) * limit;
+    return {
+      data: filtered.slice(skip, skip + limit),
+      pagination: { page, limit, total: filtered.length, pages: Math.ceil(filtered.length / limit) },
+    };
   }
 
   async setActive(schoolId: string, parentId: string, isActive: boolean) {
