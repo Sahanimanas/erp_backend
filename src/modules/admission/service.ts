@@ -10,11 +10,26 @@ const toDate = (v: any): Date | undefined => {
   return isNaN(d.getTime()) ? undefined : d;
 };
 
+const PHONE_RE = /^[0-9]{10}$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[a-zA-Z]{2,}$/;
+
+/** Mirrors the enquiry form's client-side rules so the API can't be bypassed. */
+const assertPhone = (phone: string) => {
+  if (!PHONE_RE.test(phone)) throw new Error('Phone number must be exactly 10 digits');
+};
+const assertEmail = (email: string) => {
+  if (email && !EMAIL_RE.test(email)) throw new Error('Please provide a valid email address');
+};
+
 export class AdmissionService {
   async createEnquiry(schoolId: string, data: CreateEnquiryRequest) {
     if (!data.studentName || !data.phone) {
       throw new Error('Student name and phone are required');
     }
+    const phone = String(data.phone).trim();
+    const email = data.email ? String(data.email).trim() : undefined;
+    assertPhone(phone);
+    assertEmail(email || '');
     return db.admissionEnquiry.create({
       data: {
         schoolId,
@@ -23,8 +38,8 @@ export class AdmissionService {
         dateOfBirth: toDate(data.dateOfBirth),
         classApplying: data.classApplying,
         parentName: data.parentName,
-        phone: data.phone.trim(),
-        email: data.email,
+        phone,
+        email: email || undefined,
         address: data.address,
         source: data.source || 'Walk-in',
         reference: data.reference,
@@ -77,6 +92,17 @@ export class AdmissionService {
     await this.getEnquiry(schoolId, id);
 
     const update: any = { ...data };
+    // Only validate contact fields the caller actually sent — status-only PATCHes
+    // (the stage dropdown) must not trip over legacy rows.
+    if (data.phone !== undefined) {
+      update.phone = String(data.phone).trim();
+      assertPhone(update.phone);
+    }
+    if (data.email !== undefined) {
+      update.email = String(data.email).trim();
+      assertEmail(update.email);
+      if (!update.email) update.email = null;
+    }
     if (data.dateOfBirth !== undefined) update.dateOfBirth = toDate(data.dateOfBirth);
     if (data.followUpDate !== undefined) update.followUpDate = toDate(data.followUpDate);
     if (data.status && !STATUSES.includes(data.status as any)) delete update.status;

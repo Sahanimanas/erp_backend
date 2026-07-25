@@ -67,6 +67,15 @@ enum LeaveStatus {
   PENDING
   APPROVED
   REJECTED
+  CANCELLED
+}
+
+/// How often a leave type's entitlement resets.
+enum LeaveValidity {
+  MONTHLY
+  YEARLY
+  SESSION
+  ON_OCCASION
 }
 
 enum ExamType {
@@ -684,6 +693,7 @@ model Employee {
   designation     Designation?        @relation(fields: [designationId], references: [id])
   attendance      EmployeeAttendance[]
   leaves          Leave[]
+  leaveAssignments LeaveAssignment[]
   payslips        Payslip[]
   experiences     EmployeeExperience[]
   invigilations   ExamSchedule[]
@@ -747,13 +757,50 @@ model LeaveType {
   schoolId  String
   name      String
   shortName String
+  /// Default leave count granted per validity period. 0 = uncapped.
   maxDays   Int
+  paid      Boolean       @default(true)
+  validity  LeaveValidity @default(YEARLY)
+  enabled   Boolean       @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  deletedAt DateTime?
 
-  leaves Leave[]
+  leaves      Leave[]
+  assignments LeaveAssignment[]
 
   @@unique([schoolId, name])
+  @@index([schoolId])
+}
+
+/// Per-employee entitlement for a leave type. Absent row ⇒ the type's
+/// `maxDays` default applies; a row overrides it for that one employee.
+model LeaveAssignment {
+  id          String   @id @default(cuid())
+  schoolId    String
+  employeeId  String
+  leaveTypeId String
+  count       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  employee  Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, leaveTypeId])
+  @@index([schoolId])
+  @@index([leaveTypeId])
+}
+
+/// School holiday calendar — days excluded from the "actual" leave day count.
+model Holiday {
+  id        String   @id @default(cuid())
+  schoolId  String
+  name      String
+  date      DateTime @db.Date
+  createdAt DateTime @default(now())
+
+  @@unique([schoolId, date])
   @@index([schoolId])
 }
 
@@ -765,9 +812,13 @@ model Leave {
   startDate    DateTime
   endDate      DateTime
   days         Int
+  /// Days actually deducted — `days` minus Sundays and calendar holidays.
+  actualDays   Int?
   reason       String
   status       LeaveStatus @default(PENDING)
   approvedBy   String?
+  /// When the leave was approved / rejected / cancelled.
+  actionDate   DateTime?
   remarks      String?
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt

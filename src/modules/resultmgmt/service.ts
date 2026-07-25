@@ -245,7 +245,8 @@ export class ResultMgmtService {
       let obtained = 0; let total = 0;
       cols.forEach((c) => { total += c.total; const v = byKey.get(`${s.id}|${c.id}`); if (typeof v === 'number') obtained += v; });
       const pct = total ? Math.round((obtained / total) * 100) : 0;
-      return { ...s, obtained, total, percentage: pct, grade: await this.gradeFor(schoolId, pct) };
+      const marksMap = Object.fromEntries(cols.map((c) => [c.id, byKey.has(`${s.id}|${c.id}`) ? byKey.get(`${s.id}|${c.id}`) : null]));
+      return { ...s, marks: marksMap, obtained, total, percentage: pct, grade: await this.gradeFor(schoolId, pct) };
     }));
 
     const pub = await db.examResultPublish.findUnique({ where: { examId_sectionId: { examId, sectionId } } });

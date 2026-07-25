@@ -145,6 +145,23 @@ export class EmployeeController {
     }
   }
 
+  /** One department + its employee roster (Department Details page). */
+  async getDepartment(req: Request, res: Response): Promise<void> {
+    try {
+      const schoolId = req.user?.schoolId;
+
+      if (!schoolId) {
+        return void errorResponse(res, 400, 'School ID required');
+      }
+
+      const dept = await employeeService.getDepartment(schoolId, req.params.id);
+      successResponse(res, 200, dept);
+    } catch (error: any) {
+      const statusCode = error.message?.includes('not found') ? 404 : 400;
+      errorResponse(res, statusCode, error.message || 'Failed to load department');
+    }
+  }
+
   async createDesignation(req: Request, res: Response): Promise<void> {
     try {
       const schoolId = req.user?.schoolId;
@@ -201,6 +218,127 @@ export class EmployeeController {
       const result = await employeeService.importEmployees(req.user!.schoolId, req.body.employees || req.body.rows || req.body);
       successResponse(res, 200, result, `Imported ${result.imported} employee(s)`);
     } catch (e: any) { errorResponse(res, 400, e.message || 'Failed to import employees'); }
+  }
+
+  // ── Leave types ──────────────────────────────────────────────────────────
+  async listLeaveTypes(req: Request, res: Response): Promise<void> {
+    try {
+      // ?enabled=true limits the list to types that can currently be applied for.
+      const onlyEnabled = req.query.enabled === 'true';
+      const types = await employeeService.listLeaveTypes(req.user!.schoolId, !onlyEnabled);
+      successResponse(res, 200, types);
+    } catch (e: any) { errorResponse(res, 400, e.message || 'Failed to list leave types'); }
+  }
+
+  // ── Leave assign ─────────────────────────────────────────────────────────
+  async getLeaveAssignments(req: Request, res: Response): Promise<void> {
+    try {
+      const rows = await employeeService.getLeaveAssignments(req.user!.schoolId, req.params.employeeId);
+      successResponse(res, 200, rows);
+    } catch (e: any) { errorResponse(res, e.message?.includes('not found') ? 404 : 400, e.message || 'Failed to load leave assignments'); }
+  }
+
+  async saveLeaveAssignments(req: Request, res: Response): Promise<void> {
+    try {
+      const items = req.body.assignments || req.body.items || req.body;
+      const rows = await employeeService.saveLeaveAssignments(req.user!.schoolId, req.params.employeeId, items);
+      successResponse(res, 200, rows, 'Leave assignment updated successfully');
+    } catch (e: any) { errorResponse(res, e.message?.includes('not found') ? 404 : 400, e.message || 'Failed to update leave assignments'); }
+  }
+
+  /** "Leave Assigned Details": entitlement vs days applied, per leave type. */
+  async getLeaveSummary(req: Request, res: Response): Promise<void> {
+    try {
+      const rows = await employeeService.getLeaveSummary(req.user!.schoolId, req.params.employeeId);
+      successResponse(res, 200, rows);
+    } catch (e: any) { errorResponse(res, e.message?.includes('not found') ? 404 : 400, e.message || 'Failed to load leave summary'); }
+  }
+
+  async cancelLeave(req: Request, res: Response): Promise<void> {
+    try {
+      const leave = await employeeService.cancelLeave(req.user!.schoolId, req.params.leaveId, req.body?.remarks);
+      successResponse(res, 200, leave, 'Leave cancelled successfully');
+    } catch (e: any) { errorResponse(res, e.message?.includes('not found') ? 404 : 400, e.message || 'Failed to cancel leave'); }
+  }
+
+  // ── Self-service (Apply Leave) ───────────────────────────────────────────
+  // "me" routes resolve the Employee row behind the logged-in user, so a
+  // teacher/staff member can apply without being able to name another employee.
+
+  async getMyEmployee(req: Request, res: Response): Promise<void> {
+    try {
+      const employee = await employeeService.getMyEmployee(req.user!.schoolId, req.user!.id);
+      successResponse(res, 200, employee);
+    } catch (e: any) { errorResponse(res, 404, e.message || 'No employee record linked to this login'); }
+  }
+
+  async getMyLeaves(req: Request, res: Response): Promise<void> {
+    try {
+      const employee = await employeeService.getMyEmployee(req.user!.schoolId, req.user!.id);
+      const leaves = await employeeService.getEmployeeLeaves(req.user!.schoolId, employee.id);
+      successResponse(res, 200, leaves);
+    } catch (e: any) { errorResponse(res, 404, e.message || 'Failed to load your leaves'); }
+  }
+
+  async getMyLeaveSummary(req: Request, res: Response): Promise<void> {
+    try {
+      const employee = await employeeService.getMyEmployee(req.user!.schoolId, req.user!.id);
+      const rows = await employeeService.getLeaveSummary(req.user!.schoolId, employee.id);
+      successResponse(res, 200, rows);
+    } catch (e: any) { errorResponse(res, 404, e.message || 'Failed to load your leave summary'); }
+  }
+
+  async applyMyLeave(req: Request, res: Response): Promise<void> {
+    try {
+      const { leaveTypeId, startDate, endDate } = req.body;
+      if (!leaveTypeId || !startDate || !endDate) {
+        return void errorResponse(res, 400, 'Leave type and dates are required');
+      }
+      const employee = await employeeService.getMyEmployee(req.user!.schoolId, req.user!.id);
+      const leave = await employeeService.applyLeave(req.user!.schoolId, employee.id, {
+        ...req.body,
+        reason: req.body.reason || 'Applied by employee',
+      });
+      createdResponse(res, leave, 'Leave applied successfully');
+    } catch (e: any) { errorResponse(res, e.message?.includes('not found') ? 404 : 400, e.message || 'Failed to apply leave'); }
+  }
+
+  async createLeaveType(req: Request, res: Response): Promise<void> {
+    try {
+      const type = await employeeService.createLeaveType(req.user!.schoolId, req.body);
+      createdResponse(res, type, 'Leave type created successfully');
+    } catch (e: any) { errorResponse(res, 400, e.message || 'Failed to create leave type'); }
+  }
+
+  async updateLeaveType(req: Request, res: Response): Promise<void> {
+    try {
+      const type = await employeeService.updateLeaveType(req.user!.schoolId, req.params.id, req.body);
+      successResponse(res, 200, type, 'Leave type updated successfully');
+    } catch (e: any) { errorResponse(res, e.message?.includes('not found') ? 404 : 400, e.message || 'Failed to update leave type'); }
+  }
+
+  async deleteLeaveType(req: Request, res: Response): Promise<void> {
+    try {
+      await employeeService.deleteLeaveType(req.user!.schoolId, req.params.id);
+      successResponse(res, 200, null, 'Leave type deleted');
+    } catch (e: any) { errorResponse(res, e.message?.includes('not found') ? 404 : 400, e.message || 'Failed to delete leave type'); }
+  }
+
+  /** School-wide leave register (admin approval queue). */
+  async listLeaves(req: Request, res: Response): Promise<void> {
+    try {
+      const { status, employeeId, departmentId, startDate, endDate } = req.query as Record<string, string>;
+      const leaves = await employeeService.listLeaves(req.user!.schoolId, { status, employeeId, departmentId, startDate, endDate });
+      successResponse(res, 200, leaves);
+    } catch (e: any) { errorResponse(res, 400, e.message || 'Failed to list leaves'); }
+  }
+
+  /** Per-leave-type entitlement / used / remaining for one employee. */
+  async getLeaveBalance(req: Request, res: Response): Promise<void> {
+    try {
+      const balance = await employeeService.getLeaveBalance(req.user!.schoolId, req.params.employeeId);
+      successResponse(res, 200, balance);
+    } catch (e: any) { errorResponse(res, e.message?.includes('not found') ? 404 : 400, e.message || 'Failed to load leave balance'); }
   }
 
   async applyLeave(req: Request, res: Response): Promise<void> {

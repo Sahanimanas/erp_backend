@@ -2,6 +2,52 @@ import { db } from '@common/database/client';
 import { hashPassword, generateRandomPassword } from '@common/utils/crypto';
 import { CreateEmployeeRequest, UpdateEmployeeRequest, CreateDepartmentRequest, CreateDesignationRequest, ApplyLeaveRequest } from './types';
 
+export interface LeaveTypeInput {
+  name?: string;
+  shortName?: string;
+  maxDays?: number;
+  paid?: boolean;
+  enabled?: boolean;
+  validity?: 'MONTHLY' | 'YEARLY' | 'SESSION' | 'ON_OCCASION';
+}
+
+/** Shape a LeaveType create/restore payload from raw request input. */
+function normalizeLeaveType(data: LeaveTypeInput, name: string) {
+  return {
+    name,
+    shortName: (data.shortName || name.slice(0, 3)).trim().toUpperCase(),
+    maxDays: Math.max(0, Number(data.maxDays) || 0),
+    paid: data.paid === undefined ? true : !!data.paid,
+    enabled: data.enabled === undefined ? true : !!data.enabled,
+    validity: (data.validity as any) || 'YEARLY',
+  };
+}
+
+/** Midnight-UTC copy of a date, so day maths never drifts on DST/timezones. */
+function atUtcMidnight(d: Date) {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+}
+
+/**
+ * Days in [start, end] inclusive, minus Sundays and any date on the school's
+ * holiday calendar — the "Actual (Exclude Holidays)" figure.
+ */
+async function countActualDays(schoolId: string, start: Date, end: Date): Promise<number> {
+  const holidays = await db.holiday.findMany({
+    where: { schoolId, date: { gte: atUtcMidnight(start), lte: atUtcMidnight(end) } },
+    select: { date: true },
+  });
+  const off = new Set(holidays.map((h) => atUtcMidnight(h.date).toISOString().slice(0, 10)));
+
+  let count = 0;
+  for (let d = atUtcMidnight(start); d <= atUtcMidnight(end); d = new Date(d.getTime() + 86400000)) {
+    if (d.getUTCDay() === 0) continue;                       // Sunday = weekly off
+    if (off.has(d.toISOString().slice(0, 10))) continue;     // declared holiday
+    count++;
+  }
+  return count;
+}
+
 export class EmployeeService {
   /**
    * Create employee
@@ -299,6 +345,35 @@ export class EmployeeService {
   }
 
   /**
+   * One department with its full staff roster — backs the Department Details
+   * drill-down page. Soft-deleted employees are excluded so the roster matches
+   * the count shown on the department list.
+   */
+  async getDepartment(schoolId: string, id: string) {
+    const dept = await db.department.findFirst({
+      where: { id, schoolId, deletedAt: null },
+      include: {
+        employees: {
+          where: { deletedAt: null },
+          select: {
+            id: true,
+            employeeCode: true,
+            gender: true,
+            photo: true,
+            dateOfJoining: true,
+            user: { select: { firstName: true, lastName: true, email: true, phone: true, isActive: true } },
+            designation: { select: { name: true } },
+          },
+          orderBy: { employeeCode: 'asc' },
+        },
+      },
+    });
+
+    if (!dept) throw new Error('Department not found');
+    return dept;
+  }
+
+  /**
    * Create designation
    */
   async createDesignation(schoolId: string, data: CreateDesignationRequest) {
@@ -462,31 +537,84 @@ export class EmployeeService {
    */
   async applyLeave(schoolId: string, employeeId: string, data: ApplyLeaveRequest) {
     const employee = await db.employee.findFirst({
-      where: { id: employeeId, schoolId },
+      where: { id: employeeId, schoolId, deletedAt: null },
     });
 
     if (!employee) {
       throw new Error('Employee not found');
     }
 
-    const leaveType = await db.leaveType.findUnique({
-      where: { id: data.leaveTypeId },
+    // Scope the leave type to this school — an unscoped lookup would let one
+    // tenant book leave against another tenant's leave type.
+    const leaveType = await db.leaveType.findFirst({
+      where: { id: data.leaveTypeId, schoolId, deletedAt: null },
     });
 
     if (!leaveType) {
       throw new Error('Leave type not found');
     }
+    if (!leaveType.enabled) {
+      throw new Error(`${leaveType.name} is currently disabled`);
+    }
 
-    const days = Math.ceil((data.endDate.getTime() - data.startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    // `<input type="date">` posts "YYYY-MM-DD" strings, not Dates — coerce
+    // before any date arithmetic or Prisma write.
+    const startDate = new Date(data.startDate);
+    const endDate = new Date(data.endDate);
+
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      throw new Error('Invalid start or end date');
+    }
+    if (endDate < startDate) {
+      throw new Error('End date cannot be before the start date');
+    }
+
+    const days = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    const actualDays = await countActualDays(schoolId, startDate, endDate);
+
+    // Block double-booking: any live leave overlapping this range. Rejected and
+    // cancelled applications free their dates back up.
+    const clash = await db.leave.findFirst({
+      where: {
+        employeeId,
+        deletedAt: null,
+        status: { in: ['PENDING', 'APPROVED'] },
+        startDate: { lte: endDate },
+        endDate: { gte: startDate },
+      },
+    });
+
+    if (clash) {
+      throw new Error('Leave apply failed — the selected dates are already applied for');
+    }
+
+    // Entitlement check against this employee's assigned count (falling back to
+    // the leave type's default). 0 = uncapped.
+    const assignment = await db.leaveAssignment.findUnique({
+      where: { employeeId_leaveTypeId: { employeeId, leaveTypeId: data.leaveTypeId } },
+    });
+    const entitled = assignment ? assignment.count : leaveType.maxDays;
+
+    if (entitled > 0) {
+      const used = await db.leave.aggregate({
+        where: { employeeId, leaveTypeId: data.leaveTypeId, deletedAt: null, status: { in: ['PENDING', 'APPROVED'] } },
+        _sum: { actualDays: true },
+      });
+      const alreadyUsed = used._sum.actualDays || 0;
+      if (alreadyUsed + actualDays > entitled) {
+        throw new Error(`${leaveType.name} balance exceeded — ${Math.max(0, entitled - alreadyUsed)} day(s) remaining of ${entitled}`);
+      }
+    }
 
     const leave = await db.leave.create({
       data: {
         schoolId,
         employeeId,
         leaveTypeId: data.leaveTypeId,
-        startDate: data.startDate,
-        endDate: data.endDate,
+        startDate,
+        endDate,
         days,
+        actualDays,
         reason: data.reason,
         status: 'PENDING',
       },
@@ -496,6 +624,256 @@ export class EmployeeService {
     });
 
     return leave;
+  }
+
+  /**
+   * The Employee row for a logged-in user — backs the self-service Apply Leave
+   * page, where the applicant is whoever is signed in.
+   */
+  async getMyEmployee(schoolId: string, userId: string) {
+    const employee = await db.employee.findFirst({
+      where: { userId, schoolId, deletedAt: null },
+      include: {
+        user: { select: { firstName: true, lastName: true, email: true, phone: true } },
+        department: { select: { name: true } },
+        designation: { select: { name: true } },
+      },
+    });
+    if (!employee) throw new Error('No employee record is linked to this login');
+    return employee;
+  }
+
+  /** Cancel a leave (the reference UI's "Cancel" beside Approve). */
+  async cancelLeave(schoolId: string, leaveId: string, remarks?: string) {
+    const leave = await db.leave.findFirst({ where: { id: leaveId, schoolId, deletedAt: null } });
+    if (!leave) throw new Error('Leave not found');
+    if (leave.status === 'CANCELLED') throw new Error('Leave is already cancelled');
+
+    return db.leave.update({
+      where: { id: leaveId },
+      data: { status: 'CANCELLED', remarks, actionDate: new Date() },
+      include: { leaveType: true },
+    });
+  }
+
+  // ── Leave types ──────────────────────────────────────────────────────────
+  // The LeaveType table had no endpoints, so no leave could ever be applied
+  // for. These back the "Leave Type" page (Add/Update + All Leave Type List).
+
+  async listLeaveTypes(schoolId: string, includeDisabled = true) {
+    return db.leaveType.findMany({
+      where: { schoolId, deletedAt: null, ...(includeDisabled ? {} : { enabled: true }) },
+      include: { _count: { select: { leaves: true } } },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  async createLeaveType(schoolId: string, data: LeaveTypeInput) {
+    const name = (data.name || '').trim();
+    if (!name) throw new Error('Leave type name is required');
+
+    // A soft-deleted same-name row is restored rather than colliding with the
+    // [schoolId, name] unique constraint.
+    const existing = await db.leaveType.findFirst({ where: { schoolId, name } });
+    if (existing && !existing.deletedAt) throw new Error('Leave type already exists');
+    if (existing?.deletedAt) {
+      return db.leaveType.update({
+        where: { id: existing.id },
+        data: { ...normalizeLeaveType(data, name), deletedAt: null },
+      });
+    }
+
+    return db.leaveType.create({ data: { schoolId, ...normalizeLeaveType(data, name) } });
+  }
+
+  async updateLeaveType(schoolId: string, id: string, data: LeaveTypeInput) {
+    const t = await db.leaveType.findFirst({ where: { id, schoolId, deletedAt: null } });
+    if (!t) throw new Error('Leave type not found');
+
+    return db.leaveType.update({
+      where: { id },
+      data: {
+        name: data.name?.trim() || t.name,
+        shortName: data.shortName?.trim().toUpperCase() || t.shortName,
+        maxDays: data.maxDays === undefined ? t.maxDays : Math.max(0, Number(data.maxDays) || 0),
+        paid: data.paid === undefined ? t.paid : !!data.paid,
+        enabled: data.enabled === undefined ? t.enabled : !!data.enabled,
+        validity: (data.validity as any) || t.validity,
+      },
+    });
+  }
+
+  async deleteLeaveType(schoolId: string, id: string) {
+    const t = await db.leaveType.findFirst({ where: { id, schoolId, deletedAt: null } });
+    if (!t) throw new Error('Leave type not found');
+
+    // Soft delete — Leave.leaveTypeId is required, so a hard delete would
+    // orphan every application booked against this type.
+    await db.leaveType.update({ where: { id }, data: { deletedAt: new Date() } });
+    return { message: 'Leave type deleted' };
+  }
+
+  // ── Leave assign (per-employee entitlements) ─────────────────────────────
+
+  /**
+   * Every enabled leave type paired with this employee's entitlement. A type
+   * with no LeaveAssignment row is reported as `configured: false` and falls
+   * back to the type's own default count.
+   */
+  async getLeaveAssignments(schoolId: string, employeeId: string) {
+    const employee = await db.employee.findFirst({ where: { id: employeeId, schoolId, deletedAt: null } });
+    if (!employee) throw new Error('Employee not found');
+
+    const [types, rows] = await Promise.all([
+      db.leaveType.findMany({ where: { schoolId, deletedAt: null, enabled: true }, orderBy: { name: 'asc' } }),
+      db.leaveAssignment.findMany({ where: { employeeId } }),
+    ]);
+
+    const byType = new Map(rows.map((r) => [r.leaveTypeId, r]));
+
+    return types.map((t) => {
+      const row = byType.get(t.id);
+      return {
+        leaveTypeId: t.id,
+        name: t.name,
+        shortName: t.shortName,
+        validity: t.validity,
+        paid: t.paid,
+        defaultCount: t.maxDays,
+        count: row ? row.count : t.maxDays,
+        configured: !!row,
+      };
+    });
+  }
+
+  /** Bulk upsert of one employee's entitlements (the Leave Assign "Update"). */
+  async saveLeaveAssignments(schoolId: string, employeeId: string, items: { leaveTypeId: string; count: number }[]) {
+    const employee = await db.employee.findFirst({ where: { id: employeeId, schoolId, deletedAt: null } });
+    if (!employee) throw new Error('Employee not found');
+    if (!Array.isArray(items) || items.length === 0) throw new Error('Nothing to update');
+
+    // Only accept leave types belonging to this school.
+    const valid = await db.leaveType.findMany({
+      where: { schoolId, deletedAt: null, id: { in: items.map((i) => i.leaveTypeId) } },
+      select: { id: true },
+    });
+    const allowed = new Set(valid.map((v) => v.id));
+
+    await db.$transaction(
+      items
+        .filter((i) => allowed.has(i.leaveTypeId))
+        .map((i) => {
+          const count = Math.max(0, Number(i.count) || 0);
+          return db.leaveAssignment.upsert({
+            where: { employeeId_leaveTypeId: { employeeId, leaveTypeId: i.leaveTypeId } },
+            create: { schoolId, employeeId, leaveTypeId: i.leaveTypeId, count },
+            update: { count },
+          });
+        }),
+    );
+
+    return this.getLeaveAssignments(schoolId, employeeId);
+  }
+
+  /**
+   * "Leave Assigned Details" — entitlement vs days already applied, per type.
+   * Applied counts PENDING + APPROVED (a request in flight still reserves the
+   * days) and uses the holiday-adjusted `actualDays`.
+   */
+  async getLeaveSummary(schoolId: string, employeeId: string) {
+    const assignments = await this.getLeaveAssignments(schoolId, employeeId);
+
+    const applied = await db.leave.groupBy({
+      by: ['leaveTypeId'],
+      where: { employeeId, schoolId, deletedAt: null, status: { in: ['PENDING', 'APPROVED'] } },
+      _sum: { days: true, actualDays: true },
+    });
+
+    const byType = new Map(applied.map((a) => [a.leaveTypeId, a._sum]));
+
+    return assignments.map((a) => {
+      const sums = byType.get(a.leaveTypeId);
+      const totalApplied = sums?.actualDays ?? sums?.days ?? 0;
+      return {
+        ...a,
+        assigned: a.count,
+        totalApplied,
+        remaining: a.count > 0 ? Math.max(0, a.count - totalApplied) : null,
+      };
+    });
+  }
+
+  // ── School-wide leave register ───────────────────────────────────────────
+
+  /**
+   * All leave applications for the school, newest first, with optional
+   * status / employee / department / date-range filters. Backs the admin
+   * approval queue (the per-employee endpoint only shows one person).
+   */
+  async listLeaves(
+    schoolId: string,
+    filters: { status?: string; employeeId?: string; departmentId?: string; startDate?: string; endDate?: string } = {},
+  ) {
+    const where: any = { schoolId, deletedAt: null };
+
+    if (filters.status) where.status = filters.status;
+    if (filters.employeeId) where.employeeId = filters.employeeId;
+    if (filters.departmentId) where.employee = { departmentId: filters.departmentId };
+
+    // Overlap match: any leave touching the requested window, not just those
+    // fully inside it.
+    const from = filters.startDate ? new Date(filters.startDate) : null;
+    const to = filters.endDate ? new Date(filters.endDate) : null;
+    if (from && !isNaN(from.getTime())) where.endDate = { gte: from };
+    if (to && !isNaN(to.getTime())) where.startDate = { lte: to };
+
+    return db.leave.findMany({
+      where,
+      include: {
+        leaveType: { select: { id: true, name: true, shortName: true } },
+        employee: {
+          select: {
+            id: true,
+            employeeCode: true,
+            user: { select: { firstName: true, lastName: true, email: true } },
+            department: { select: { id: true, name: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * Per-leave-type balance for one employee: entitlement (maxDays), days already
+   * consumed by APPROVED leaves, and what's left. maxDays = 0 means unlimited.
+   */
+  async getLeaveBalance(schoolId: string, employeeId: string) {
+    const employee = await db.employee.findFirst({ where: { id: employeeId, schoolId, deletedAt: null } });
+    if (!employee) throw new Error('Employee not found');
+
+    const [types, approved] = await Promise.all([
+      db.leaveType.findMany({ where: { schoolId }, orderBy: { name: 'asc' } }),
+      db.leave.groupBy({
+        by: ['leaveTypeId'],
+        where: { employeeId, schoolId, status: 'APPROVED', deletedAt: null },
+        _sum: { days: true },
+      }),
+    ]);
+
+    const usedByType = new Map(approved.map((a) => [a.leaveTypeId, a._sum.days || 0]));
+
+    return types.map((t) => {
+      const used = usedByType.get(t.id) || 0;
+      return {
+        leaveTypeId: t.id,
+        name: t.name,
+        shortName: t.shortName,
+        maxDays: t.maxDays,
+        used,
+        remaining: t.maxDays > 0 ? Math.max(0, t.maxDays - used) : null,
+      };
+    });
   }
 
   /**
@@ -538,6 +916,7 @@ export class EmployeeService {
       data: {
         status: 'APPROVED',
         approvedBy,
+        actionDate: new Date(),
       },
       include: {
         leaveType: true,
@@ -564,6 +943,7 @@ export class EmployeeService {
       data: {
         status: 'REJECTED',
         remarks,
+        actionDate: new Date(),
       },
       include: {
         leaveType: true,
