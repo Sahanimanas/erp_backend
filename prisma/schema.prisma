@@ -576,6 +576,7 @@ model Student {
   documents   StudentDocument[]
   biometricEnrollments BiometricEnrollment[]
   attendancePunches    AttendancePunch[]
+  transportRoutes      TransportStudentRoute[]
 
   @@unique([schoolId, rollNumber])
   @@index([schoolId])
@@ -1114,6 +1115,9 @@ model ClassFeeStructure {
   @@index([academicYearId])
 }
 
+// A transport route. Shared by BOTH Fee Management (which sets `fee`) and the
+// Transport module (which sets the operational columns below) — one row per
+// route, so a route created on either screen shows up on the other.
 model TransportRoute {
   id        String   @id @default(cuid())
   schoolId  String
@@ -1123,8 +1127,136 @@ model TransportRoute {
   updatedAt DateTime @updatedAt
   deletedAt DateTime?
 
+  // ── Operational detail (Transport module). All optional so routes created
+  // from the Fee Management screen — which only knows name + fee — stay valid.
+  routeFrom String?
+  routeTo   String?
+  vehicleId String?
+  driverId  String?
+  staffId   String?            // Employee assigned to accompany the route
+  enabled   Boolean  @default(true)
+
+  vehicle   TransportVehicle? @relation(fields: [vehicleId], references: [id])
+  driver    TransportDriver?  @relation(fields: [driverId], references: [id])
+  stoppages TransportRouteStoppage[]
+  students  TransportStudentRoute[]
+
   @@unique([schoolId, name])
   @@index([schoolId])
+  @@index([vehicleId])
+  @@index([driverId])
+}
+
+// A bus/van in the school fleet.
+model TransportVehicle {
+  id            String   @id @default(cuid())
+  schoolId      String
+  name          String
+  vehicleNumber String
+  vehicleModel  String?
+  gpsDeviceId   String?
+  seatCapacity  Int      @default(0)
+  enabled       Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+
+  routes        TransportRoute[]
+
+  @@unique([schoolId, vehicleNumber])
+  @@index([schoolId])
+}
+
+model TransportDriver {
+  id        String   @id @default(cuid())
+  schoolId  String
+  name      String
+  licenseNo String
+  phone     String?
+  email     String?
+  age       Int?
+  address   String?
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  routes    TransportRoute[]
+
+  @@index([schoolId])
+}
+
+// A pickup/drop point. Latitude/longitude are optional — a stop can be recorded
+// by name alone and pinned on the map later.
+model TransportStoppage {
+  id        String   @id @default(cuid())
+  schoolId  String
+  name      String
+  latitude  Float?
+  longitude Float?
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  routeLinks TransportRouteStoppage[]
+  students   TransportStudentRoute[]
+
+  @@unique([schoolId, name])
+  @@index([schoolId])
+}
+
+enum TransportStopType {
+  START_POINT
+  STOPPAGE_POINT
+  END_POINT
+}
+
+// A stop's place in a route: which stop, at what time, in what order.
+model TransportRouteStoppage {
+  id         String   @id @default(cuid())
+  schoolId   String
+  routeId    String
+  stoppageId String
+  time       String?              // "07:30" — clock time, not a timestamp
+  sequenceNo Int      @default(0)
+  stopType   TransportStopType @default(STOPPAGE_POINT)
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  deletedAt  DateTime?
+
+  route      TransportRoute    @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  stoppage   TransportStoppage @relation(fields: [stoppageId], references: [id], onDelete: Cascade)
+
+  @@unique([routeId, stoppageId])
+  @@index([schoolId])
+  @@index([routeId])
+  @@index([stoppageId])
+}
+
+// Which student boards which route at which stop. This is the FK-based link
+// that replaces matching Student.transportRoute by name string.
+model TransportStudentRoute {
+  id             String   @id @default(cuid())
+  schoolId       String
+  routeId        String
+  stoppageId     String
+  studentId      String
+  academicYearId String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  deletedAt      DateTime?
+
+  route          TransportRoute    @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  stoppage       TransportStoppage @relation(fields: [stoppageId], references: [id], onDelete: Cascade)
+  student        Student           @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, academicYearId])
+  @@index([schoolId])
+  @@index([routeId])
+  @@index([stoppageId])
+  @@index([studentId])
 }
 
 // A single fee payment line against a ClassFeeType for a student. The "ledger"
