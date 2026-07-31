@@ -79,18 +79,52 @@ interface Session {
   /** Guards against spawning two sockets for the same school concurrently. */
   starting?: boolean;
 
-  // ── Anti-ban send queue (one serial queue per account) ──────────────────
-  /** Pending sends, drained one/two at a time with randomized spacing. */
+  // ── Anti-ban send queues (per account) ──────────────────────────────────
+  // Interactive and bulk are kept in SEPARATE queues with their own workers and
+  // their own throttle cursors. With one shared queue + one worker, a worker
+  // sleeping out a ≈1-min bulk gap also blocked every interactive send behind
+  // it — unshifting to the head of the queue could not help, because nothing
+  // was free to pick the task up.
+  /** Pending interactive sends, drained with the fast gap (default 3–10s). */
   queue: QueueTask[];
-  /** Number of drain workers currently running (capped at sendConcurrency). */
+  /** Pending bulk sends, drained one at a time with the wide gap (≈1 min). */
+  bulkQueue: QueueTask[];
+  /** Interactive drain workers running (capped at sendConcurrency). */
   activeWorkers: number;
-  /** Earliest epoch-ms the next send may start — enforces the random gap. */
+  /** Whether the single bulk drain worker is running. */
+  bulkWorkerActive: boolean;
+  /** Earliest epoch-ms the next interactive send may start. */
   nextSlotAt: number;
+  /** Earliest epoch-ms the next bulk send may start (independent cursor). */
+  nextBulkSlotAt: number;
+
+  /**
+   * Cache of "is this number actually on WhatsApp" lookups, keyed by JID.
+   * Bounded and TTL'd. Sending to a number that has no WhatsApp account
+   * succeeds locally and delivers nothing, which is indistinguishable from a
+   * broken link from the UI's point of view — so we check first.
+   */
+  jidChecks: Map<string, { jid: string; exists: boolean; at: number }>;
 
   // ── Reconnection (never deletes credentials) ────────────────────────────
   /** Consecutive reconnect attempts; drives exponential backoff, reset on open. */
   reconnectAttempts: number;
+  /**
+   * How many 515 (restartRequired) restarts we've done since the last successful
+   * open. These are protocol-mandated, not failures, so they don't count as
+   * reconnect attempts — but they're capped so a genuine 515 loop can't spin.
+   */
+  restartRequiredCount?: number;
   reconnectTimer?: ReturnType<typeof setTimeout>;
+  /**
+   * Set when WhatsApp logged the number out, another device took it over, or
+   * reconnects were exhausted. While true NOTHING auto-starts a socket — only an
+   * explicit `connect()` does. This is deliberate: silently re-registering a
+   * number in a loop is one of the strongest ban signals there is.
+   */
+  requiresRelink?: boolean;
+  /** Epoch-ms of the last socket-start attempt — enforces the start cooldown. */
+  lastStartAt: number;
 
   /** Live delivery / reliability counters for monitoring. */
   metrics: SessionMetrics;
@@ -107,8 +141,34 @@ interface Session {
 /** Cap on cached sent messages per school, to bound memory for retry replays. */
 const SENT_CACHE_LIMIT = 1000;
 
-// Baileys is noisy; route its logs through a silent pino instance.
-const logger = pino({ level: 'silent' });
+/**
+ * "Is this number on WhatsApp" lookups are cached per school. The TTL is short
+ * enough that a number which later joins WhatsApp isn't blocked for long, and
+ * long enough that a broadcast to one class doesn't re-query per message.
+ */
+const JID_CHECK_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const JID_CHECK_LIMIT = 5000;
+/** Cap on how long the recipient lookup may hold up a send before we proceed. */
+const JID_CHECK_TIMEOUT_MS = 8000;
+
+/**
+ * How many protocol-mandated 515 restarts to allow before treating them as a
+ * real fault. Pairing normally needs exactly one; more than a handful means
+ * something is genuinely wrong and should fall back to backoff.
+ */
+const MAX_RESTART_REQUIRED = 5;
+
+/**
+ * Marker file dropped in a school's auth dir when the number needs a deliberate
+ * relink. Kept on disk (rather than in the DB) so it survives restarts without
+ * a schema change, and travels with the credentials it describes.
+ */
+const RELINK_MARKER = '.relink-required';
+
+// Baileys is noisy, so it is silent by default — but "silent" also means that
+// when a session goes wrong there is NOTHING to look at. WHATSAPP_LOG_LEVEL
+// ('debug' / 'trace' / 'warn') opens it back up for diagnosis without a rebuild.
+const logger = pino({ level: config.whatsapp.logLevel || 'silent' });
 
 class WhatsAppService {
   private sessions = new Map<string, Session>();
@@ -194,7 +254,9 @@ class WhatsAppService {
     try {
       if (!fs.existsSync(dir)) return [];
       return fs.readdirSync(dir, { withFileTypes: true })
-        .filter((entry) => entry.isFile())
+        // The relink marker is local bookkeeping, not a credential — keep it out
+        // of the DB mirror so it never round-trips back onto another host.
+        .filter((entry) => entry.isFile() && entry.name !== RELINK_MARKER)
         .map((entry) => ({
           name: entry.name,
           data: fs.readFileSync(path.join(dir, entry.name), 'utf8'),
@@ -263,15 +325,69 @@ class WhatsAppService {
       session = {
         status: 'disconnected',
         queue: [],
+        bulkQueue: [],
         activeWorkers: 0,
+        bulkWorkerActive: false,
         nextSlotAt: 0,
+        nextBulkSlotAt: 0,
+        jidChecks: new Map(),
         reconnectAttempts: 0,
+        lastStartAt: 0,
         metrics: { sent: 0, delivered: 0, read: 0, failed: 0, reconnects: 0 },
         sentMessages: new Map(),
       };
+      // A previous logout / exhausted reconnect is remembered on disk, so a
+      // server restart doesn't undo it and start re-registering the number.
+      session.requiresRelink = this.readRelinkMarker(schoolId);
       this.sessions.set(schoolId, session);
     }
     return session;
+  }
+
+  // ── Relink marker (survives restarts, no migration needed) ────────────────
+
+  private relinkMarkerPath(schoolId: string): string {
+    return path.join(this.sessionDir(schoolId), RELINK_MARKER);
+  }
+
+  private readRelinkMarker(schoolId: string): boolean {
+    try {
+      return fs.existsSync(this.relinkMarkerPath(schoolId));
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Latch "this number must be relinked by hand". Every auto-start path checks
+   * this, so a dead link can never turn into a silent re-registration loop.
+   */
+  private setRelinkRequired(schoolId: string, session: Session, reason: string): void {
+    session.requiresRelink = true;
+    session.status = 'disconnected';
+    session.lastError = reason;
+    session.qr = undefined;
+    session.sock = undefined;
+    if (session.reconnectTimer) {
+      clearTimeout(session.reconnectTimer);
+      session.reconnectTimer = undefined;
+    }
+    try {
+      const dir = this.sessionDir(schoolId);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(this.relinkMarkerPath(schoolId), `${reason}\n${new Date().toISOString()}\n`, 'utf8');
+    } catch {
+      /* the in-memory flag still holds for this process */
+    }
+  }
+
+  private clearRelinkRequired(schoolId: string, session: Session): void {
+    session.requiresRelink = false;
+    try {
+      fs.rmSync(this.relinkMarkerPath(schoolId), { force: true });
+    } catch {
+      /* ignore */
+    }
   }
 
   /**
@@ -284,6 +400,20 @@ class WhatsAppService {
     if (session.status === 'connected') return this.getStatus(schoolId);
     if (session.starting || session.status === 'connecting' || session.status === 'qr') {
       return this.getStatus(schoolId);
+    }
+
+    // An admin asking to link is the ONLY thing that lifts the relink latch. The
+    // dead credentials are dropped here (once, deliberately) rather than the
+    // moment WhatsApp logged us out, so nothing in the background can turn a
+    // logout into a re-registration loop.
+    if (session.requiresRelink) {
+      await this.clearAuth(schoolId);
+      this.clearRelinkRequired(schoolId, session);
+      session.reconnectAttempts = 0;
+      session.restartRequiredCount = 0;
+      session.lastStartAt = 0;
+      session.number = undefined;
+      session.lastError = undefined;
     }
 
     await this.startSocket(schoolId);
@@ -305,6 +435,19 @@ class WhatsAppService {
   private async startSocket(schoolId: string): Promise<void> {
     const existing = this.starting.get(schoolId);
     if (existing) return existing;
+
+    const session = this.getOrInit(schoolId);
+    if (session.requiresRelink) {
+      throw this.permanent(session.lastError || 'This number must be relinked — scan the QR from the WhatsApp page.');
+    }
+
+    // Rate-limit socket creation per school. Status polling, sends and the
+    // reconnect timer all funnel through here; without this they could stack up
+    // into back-to-back registrations of the same number.
+    const since = Date.now() - session.lastStartAt;
+    const cooldown = Math.max(0, config.whatsapp.startCooldownMs);
+    if (session.lastStartAt && since < cooldown) return;
+    session.lastStartAt = Date.now();
 
     const start = this.doStartSocket(schoolId).finally(() => {
       this.starting.delete(schoolId);
@@ -415,6 +558,7 @@ class WhatsAppService {
         session.number = liveSock.user?.id?.split(':')[0]?.split('@')[0];
         // Back online — reset the reconnect backoff and cancel any pending timer.
         session.reconnectAttempts = 0;
+        session.restartRequiredCount = 0;
         if (session.reconnectTimer) {
           clearTimeout(session.reconnectTimer);
           session.reconnectTimer = undefined;
@@ -433,21 +577,40 @@ class WhatsAppService {
         session.qr = undefined;
 
         if (loggedOut) {
-          // Credentials are dead — wipe them so the next connect shows a fresh
-          // QR. The persisted number is kept so the UI can say WHICH number
-          // needs relinking; it is only cleared on an explicit disconnect.
-          session.status = 'disconnected';
-          session.lastError = 'Logged out by WhatsApp — scan the QR to link again';
-          session.number = undefined;
-          session.sock = undefined;
-          await this.clearAuth(schoolId);
+          // Latch "needs relinking" and STOP. We deliberately do not wipe the
+          // credentials here: wiping them used to let the very next status poll
+          // or send start a fresh registration, so a single logout could snowball
+          // into repeated re-registrations of the number — which is exactly the
+          // pattern WhatsApp bans for. The creds are dropped in `connect()`
+          // instead, when an admin actually asks to relink.
+          this.setRelinkRequired(schoolId, session, 'Logged out by WhatsApp — press “Link Number” to scan a fresh QR');
         } else if (replaced) {
           // Another socket took this number over (e.g. a second server process
           // or a manual re-link). Reconnecting would start a tug-of-war that
           // WhatsApp flags as suspicious — stand down and keep the credentials.
-          session.status = 'disconnected';
-          session.lastError = 'This number was opened in another WhatsApp session';
-          session.sock = undefined;
+          this.setRelinkRequired(schoolId, session, 'This number was opened in another WhatsApp session — relink when it is free');
+        } else if (
+          statusCode === DisconnectReason.restartRequired &&
+          (session.restartRequiredCount ?? 0) < MAX_RESTART_REQUIRED
+        ) {
+          // 515 restartRequired is NOT an error: WhatsApp requires the stream to
+          // be restarted once immediately after a fresh QR pairing. Treating it
+          // as a transient failure made a normal link look broken — it burned a
+          // reconnect attempt toward the relink latch and sat through the
+          // exponential backoff. Restart at once and don't charge an attempt.
+          session.restartRequiredCount = (session.restartRequiredCount ?? 0) + 1;
+          session.status = 'connecting';
+          session.lastError = 'Finishing link — restarting session…';
+          this.scheduleReconnect(schoolId, session, statusCode, true);
+        } else if (session.reconnectAttempts >= Math.max(1, config.whatsapp.reconnectMaxAttempts)) {
+          // Reconnects exhausted. Keep the credentials, but stop trying: an
+          // endless retry loop hammers WhatsApp's registration path and is read
+          // as abusive. An admin can resume from the WhatsApp page.
+          this.setRelinkRequired(
+            schoolId,
+            session,
+            `Could not reconnect after ${session.reconnectAttempts} attempts — press “Link Number” to resume`
+          );
         } else {
           // Transient drop (network, restart-required, timeout). Reconnect with
           // exponential backoff + jitter — never wipe credentials, so the same
@@ -467,21 +630,60 @@ class WhatsAppService {
         // WAMessageStatus: 0 ERROR, 1 PENDING, 2 SERVER_ACK, 3 DELIVERY_ACK, 4 READ, 5 PLAYED
         const status = u.update?.status;
         if (status === null || status === undefined) continue;
+        // Per-message receipt trace. Without it you cannot tell "WhatsApp never
+        // acked it" from "acked but the handset never got it" — the difference
+        // between a broken link and a bad recipient.
+        console.log(
+          `[whatsapp] receipt school=${schoolId} id=${u.key?.id ?? 'n/a'} ` +
+          `to=${u.key?.remoteJid ?? 'n/a'} status=${status}` +
+          ` (${['ERROR', 'PENDING', 'SERVER_ACK', 'DELIVERY_ACK', 'READ', 'PLAYED'][status] ?? '?'})`
+        );
         if (status >= 4) { session.metrics.read += 1; this.bumpStat(schoolId, 'read'); }
         else if (status === 3) { session.metrics.delivered += 1; this.bumpStat(schoolId, 'delivered'); }
         else if (status === 0) { session.metrics.failed += 1; this.bumpStat(schoolId, 'failed'); }
       }
     });
+
+    // Baileys reports some delivery/read receipts on this event rather than
+    // `messages.update`. Trace-only: metrics stay on the handler above so a
+    // receipt delivered on both paths is never counted twice. Without this,
+    // "no receipts" is ambiguous between "not delivered" and "we weren't
+    // listening on the right event".
+    liveSock.ev.on('message-receipt.update', (updates) => {
+      if (session.sock !== liveSock) return;
+      for (const u of updates as any[]) {
+        console.log(
+          `[whatsapp] receipt2 school=${schoolId} id=${u?.key?.id ?? 'n/a'} ` +
+          `to=${u?.key?.remoteJid ?? 'n/a'} type=${u?.receipt?.receiptTimestamp ? 'delivery' : u?.receipt?.readTimestamp ? 'read' : 'other'}`
+        );
+      }
+    });
   }
 
-  /** Schedule a credential-preserving reconnect with exponential backoff. */
-  private scheduleReconnect(schoolId: string, session: Session, statusCode?: number): void {
-    const attempt = (session.reconnectAttempts += 1);
-    const delay = Math.min(
-      config.whatsapp.reconnectMaxMs,
-      config.whatsapp.reconnectBaseMs * 2 ** (attempt - 1)
-    ) + randomBetween(0, 1000);
-    session.lastError = `Reconnecting in ${Math.round(delay / 1000)}s (code ${statusCode ?? 'unknown'}, attempt ${attempt})`;
+  /**
+   * Schedule a credential-preserving reconnect with exponential backoff.
+   *
+   * `immediate` is for protocol-mandated restarts (515) — reconnect almost at
+   * once and do NOT charge a reconnect attempt, so a normal pairing can't drift
+   * toward the "needs relinking" latch or make the user sit through backoff.
+   */
+  private scheduleReconnect(
+    schoolId: string,
+    session: Session,
+    statusCode?: number,
+    immediate = false
+  ): void {
+    let delay: number;
+    if (immediate) {
+      delay = randomBetween(250, 750);
+    } else {
+      const attempt = (session.reconnectAttempts += 1);
+      delay = Math.min(
+        config.whatsapp.reconnectMaxMs,
+        config.whatsapp.reconnectBaseMs * 2 ** (attempt - 1)
+      ) + randomBetween(0, 1000);
+      session.lastError = `Reconnecting in ${Math.round(delay / 1000)}s (code ${statusCode ?? 'unknown'}, attempt ${attempt})`;
+    }
 
     if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
     session.reconnectTimer = setTimeout(() => {
@@ -509,6 +711,13 @@ class WhatsAppService {
     let resumed = 0;
     for (const schoolId of schoolIds) {
       if (!(await this.hasSavedAuth(schoolId))) continue;
+      // A number latched for relinking stays down across restarts — otherwise
+      // every deploy would silently re-register a number WhatsApp already
+      // rejected once.
+      if (this.getOrInit(schoolId).requiresRelink) {
+        console.warn(`WhatsApp resume skipped for school ${schoolId}: awaiting a deliberate relink`);
+        continue;
+      }
       resumed += 1;
       this.startSocket(schoolId).catch((err) => {
         console.error(`WhatsApp resume failed for school ${schoolId}:`, err?.message || err);
@@ -544,7 +753,10 @@ class WhatsAppService {
     // linked credentials are still on disk. Resume the socket transparently
     // so a page refresh shows "connecting → connected" instead of looking
     // like a logout (which used to push users into relinking and conflicts).
-    const idle = !session || (session.status === 'disconnected' && !session.starting);
+    // …but never when the number is latched for a deliberate relink, or the poll
+    // itself becomes the thing that keeps re-registering it.
+    const latched = this.getOrInit(schoolId).requiresRelink;
+    const idle = !latched && (!session || (session.status === 'disconnected' && !session.starting));
     if (idle && await this.hasSavedAuth(schoolId)) {
       this.startSocket(schoolId).catch(() => { /* reported via lastError */ });
       session = this.sessions.get(schoolId);
@@ -560,20 +772,21 @@ class WhatsAppService {
       /* ignore — live session state still works */
     }
 
-    if (!session) return { status: 'disconnected', number: persistedNumber };
+    if (!session) return { status: 'disconnected', number: persistedNumber, requiresRelink: latched };
     return {
       status: session.status,
       qr: session.qr,
       number: session.number ?? persistedNumber,
       lastError: session.lastError,
       health: this.buildHealth(session),
+      requiresRelink: session.requiresRelink,
     };
   }
 
   private buildHealth(session: Session): WhatsAppHealth {
     const m = session.metrics;
     return {
-      queued: session.queue.length,
+      queued: session.queue.length + session.bulkQueue.length,
       sent: m.sent,
       delivered: m.delivered,
       read: m.read,
@@ -688,24 +901,49 @@ class WhatsAppService {
       daily,
       live: {
         status: session?.status ?? 'disconnected',
-        queued: session?.queue.length ?? 0,
+        queued: (session?.queue.length ?? 0) + (session?.bulkQueue.length ?? 0),
         reconnects: session?.metrics.reconnects ?? 0,
         lastSentAt: session?.metrics.lastSentAt ? new Date(session.metrics.lastSentAt).toISOString() : undefined,
       },
     };
   }
 
+  /**
+   * Cancel every send still waiting in this school's queue and drop the cached
+   * sent-message bodies. Use this the moment a broadcast needs to stop: without
+   * it a queued run keeps trickling out ≈1 message/min for hours (only a server
+   * restart cleared it), which is the worst thing to be doing while a number is
+   * already under scrutiny. The link itself is untouched.
+   */
+  cancelPending(schoolId: string): { cancelled: number; cacheCleared: number } {
+    const session = this.sessions.get(schoolId);
+    if (!session) return { cancelled: 0, cacheCleared: 0 };
+
+    const pending = [...session.queue.splice(0), ...session.bulkQueue.splice(0)];
+    pending.forEach((task) => task.reject(new Error('Send cancelled by an administrator')));
+
+    const cacheCleared = session.sentMessages.size;
+    session.sentMessages.clear();
+    // Drop both throttle cursors too, so the next deliberate send isn't stuck
+    // behind slots reserved by messages that no longer exist.
+    session.nextSlotAt = 0;
+    session.nextBulkSlotAt = 0;
+
+    return { cancelled: pending.length, cacheCleared };
+  }
+
   /** Disconnect and permanently remove the linked number's credentials. */
   async logout(schoolId: string): Promise<void> {
     const session = this.sessions.get(schoolId);
     if (session) {
+      this.clearRelinkRequired(schoolId, session);
       // Cancel a pending reconnect so it can't resurrect the just-unlinked number.
       if (session.reconnectTimer) {
         clearTimeout(session.reconnectTimer);
         session.reconnectTimer = undefined;
       }
       // Fail any queued sends rather than leaving their callers hanging forever.
-      const pending = session.queue.splice(0);
+      const pending = [...session.queue.splice(0), ...session.bulkQueue.splice(0)];
       pending.forEach((task) => task.reject(new Error('WhatsApp was disconnected')));
     }
     try {
@@ -778,6 +1016,11 @@ class WhatsAppService {
     const session = this.getOrInit(schoolId);
     if (session.status === 'connected' && session.sock) return session;
 
+    // Latched for relinking → fail permanently so the queue drops the message
+    // instead of retrying it into a socket that must not be started.
+    if (session.requiresRelink) {
+      throw this.permanent(session.lastError || 'WhatsApp must be relinked before sending.');
+    }
     if (!(await this.hasSavedAuth(schoolId))) {
       throw this.permanent('WhatsApp is not connected for this school. Link a number first.');
     }
@@ -796,6 +1039,96 @@ class WhatsAppService {
       await new Promise((r) => setTimeout(r, 500));
     }
     throw new Error('WhatsApp is reconnecting — please try again in a few seconds.');
+  }
+
+  /**
+   * Resolve a recipient JID to the one WhatsApp actually knows, and refuse to
+   * send if the number has no WhatsApp account.
+   *
+   * This is the fix for "it says connected but messages never arrive":
+   * `sendMessage` to an unregistered number resolves normally and returns a
+   * message id, so the send was counted as successful and the operator had no
+   * signal that nothing was delivered. `onWhatsApp` is also what tells us the
+   * canonical JID — WhatsApp may key an account under a different id than the
+   * plain `<digits>@s.whatsapp.net` we build, and sending to the wrong id is
+   * likewise accepted-then-dropped.
+   *
+   * Lookups are cached per session (bounded, TTL'd) so a broadcast to the same
+   * class doesn't re-query for every message.
+   *
+   * FAIL-OPEN BY DESIGN: only an explicit `exists: false` blocks a send. A
+   * missing/empty/timed-out lookup means "no answer", not "no account", and
+   * must let the message through — blocking sends on an inconclusive diagnostic
+   * is strictly worse than the silent-drop it was meant to catch.
+   */
+  private async resolveRecipient(session: Session, jid: string): Promise<string> {
+    if (!config.whatsapp.verifyRecipient) return jid;
+    // Groups aren't lookup-able this way; nothing to verify.
+    if (isJidGroup(jid)) return jid;
+
+    const cached = session.jidChecks.get(jid);
+    if (cached && Date.now() - cached.at < JID_CHECK_TTL_MS) {
+      if (!cached.exists) throw this.permanent(this.notOnWhatsAppMessage(jid));
+      return cached.jid;
+    }
+
+    let results: Array<{ jid: string; exists: unknown; lid?: unknown }> | undefined;
+    try {
+      // onWhatsApp issues a USync query; bound it so a stalled query can never
+      // hold up the send queue.
+      results = (await Promise.race([
+        session.sock!.onWhatsApp(jid),
+        sleep(JID_CHECK_TIMEOUT_MS).then(() => undefined),
+      ])) as any;
+    } catch {
+      // Lookup unavailable (socket mid-handshake, rate limited) — don't turn a
+      // diagnostic failure into a send failure.
+      return jid;
+    }
+
+    // CRITICAL: `undefined` / `[]` mean the lookup gave us NO ANSWER (no USync
+    // response, timeout, socket not ready) — NOT "this number has no WhatsApp".
+    // Treating those as a negative rejects every send while the socket is
+    // otherwise perfectly healthy. Only an explicit `exists: false` entry is a
+    // real negative; anything else is inconclusive and must let the send through.
+    if (!results || results.length === 0) {
+      console.warn(
+        `[whatsapp] recipient check INCONCLUSIVE for ${jid} ` +
+        `(${results ? 'empty result' : 'no response'}) — sending anyway`
+      );
+      return jid;
+    }
+
+    const hit = results.find((r) => r?.jid) ?? results[0];
+    const exists = Boolean(hit?.exists);
+
+    // Prefer the LID (linked identity) when WhatsApp gives us one. WhatsApp is
+    // migrating accounts from phone-number JIDs to `<id>@lid`, and once a
+    // recipient has migrated, a message addressed to `<number>@s.whatsapp.net`
+    // is accepted onto the socket (you even get a message id back) and then
+    // rejected in the ack with error 463 — so it looks sent and never arrives.
+    // Addressing the LID the server just handed us is what actually delivers.
+    const lid = typeof hit?.lid === 'string' ? hit.lid : '';
+    const resolved = lid || (hit?.jid as string) || jid;
+
+    // Only definite answers are worth caching.
+    session.jidChecks.set(jid, { jid: resolved, exists, at: Date.now() });
+    while (session.jidChecks.size > JID_CHECK_LIMIT) {
+      const oldest = session.jidChecks.keys().next().value;
+      if (oldest === undefined) break;
+      session.jidChecks.delete(oldest);
+    }
+
+    console.log(
+      `[whatsapp] recipient check ${jid} -> exists=${exists} lid=${lid || 'none'} resolved=${resolved}`
+    );
+    if (!exists) throw this.permanent(this.notOnWhatsAppMessage(jid));
+    return resolved;
+  }
+
+  private notOnWhatsAppMessage(jid: string): string {
+    const number = jid.split('@')[0];
+    return `${number} is not registered on WhatsApp — check the number (it needs a country code, e.g. 91XXXXXXXXXX).`;
   }
 
   /** Tag an error as non-retryable so the send queue rejects it immediately. */
@@ -825,11 +1158,10 @@ class WhatsAppService {
 
     return new Promise<string | undefined>((resolve, reject) => {
       const task: QueueTask = { jid, content, attempts: 0, bulk, resolve, reject };
-      // Interactive sends jump AHEAD of a running bulk batch, so a single receipt
-      // never has to wait behind a whole class of demand bills. Bulk goes to the
-      // back and is paced ≈1 min apart.
-      if (bulk) session.queue.push(task);
-      else session.queue.unshift(task);
+      // Interactive and bulk go to separate queues with separate workers, so a
+      // single receipt never waits on the bulk lane's ≈1-min pacing.
+      if (bulk) session.bulkQueue.push(task);
+      else session.queue.push(task);
       this.ensureWorkers(schoolId, session);
     });
   }
@@ -880,24 +1212,35 @@ class WhatsAppService {
     }
   }
 
-  /** Spin up drain workers up to the configured per-account concurrency (1–2). */
+  /**
+   * Spin up drain workers: up to `sendConcurrency` for the interactive lane,
+   * plus one dedicated worker for the bulk lane. The bulk worker is separate on
+   * purpose — while it sleeps out its ≈1-min gap it must not hold the only
+   * worker and stall interactive sends.
+   */
   private ensureWorkers(schoolId: string, session: Session): void {
     const target = Math.max(1, config.whatsapp.sendConcurrency || 1);
     while (session.activeWorkers < target && session.queue.length > 0) {
       session.activeWorkers += 1;
-      void this.drainWorker(schoolId, session);
+      void this.drainWorker(schoolId, session, false);
+    }
+    if (!session.bulkWorkerActive && session.bulkQueue.length > 0) {
+      session.bulkWorkerActive = true;
+      void this.drainWorker(schoolId, session, true);
     }
   }
 
-  private async drainWorker(schoolId: string, session: Session): Promise<void> {
+  private async drainWorker(schoolId: string, session: Session, bulk: boolean): Promise<void> {
+    const lane = () => (bulk ? session.bulkQueue : session.queue);
     try {
       for (;;) {
-        const task = session.queue.shift();
+        const task = lane().shift();
         if (!task) break;
         await this.processTask(schoolId, session, task);
       }
     } finally {
-      session.activeWorkers -= 1;
+      if (bulk) session.bulkWorkerActive = false;
+      else session.activeWorkers -= 1;
     }
   }
 
@@ -913,7 +1256,11 @@ class WhatsAppService {
     for (;;) {
       try {
         const live = await this.ensureConnected(schoolId);
-        const sent = await live.sock!.sendMessage(task.jid, task.content);
+        // Resolve/verify the recipient BEFORE sending. Baileys happily accepts a
+        // JID with no WhatsApp account behind it and returns a message id, so
+        // without this the send is counted as sent and silently delivers nothing.
+        const jid = await this.resolveRecipient(live, task.jid);
+        const sent = await live.sock!.sendMessage(jid, task.content);
         // Keep the encrypted content around so a retry receipt can be answered
         // (see the `getMessage` handler) — otherwise the recipient is stuck on
         // "Waiting for this message" whenever the first delivery fails to decrypt.
@@ -923,6 +1270,9 @@ class WhatsAppService {
         session.metrics.sent += 1;
         session.metrics.lastSentAt = Date.now();
         this.bumpStat(schoolId, 'sent');
+        console.log(
+          `[whatsapp] sent school=${schoolId} to=${jid} lane=${task.bulk ? 'bulk' : 'interactive'} id=${sent?.key?.id ?? 'n/a'}`
+        );
         task.resolve(sent?.key?.id ?? undefined);
         return;
       } catch (error: any) {
@@ -931,6 +1281,15 @@ class WhatsAppService {
         if (error?.permanent || task.attempts > Math.max(0, config.whatsapp.sendRetries)) {
           session.metrics.failed += 1;
           this.bumpStat(schoolId, 'failed');
+          // A failed send used to be invisible outside a counter, which made
+          // "it says connected but nothing arrives" undiagnosable. Say why.
+          const reason = error?.message || 'unknown error';
+          session.lastError = `Send to ${task.jid} failed: ${reason}`;
+          console.error(
+            `[whatsapp] send FAILED school=${schoolId} to=${task.jid} ` +
+            `lane=${task.bulk ? 'bulk' : 'interactive'} attempts=${task.attempts} ` +
+            `permanent=${Boolean(error?.permanent)} reason=${reason}`
+          );
           task.reject(error instanceof Error ? error : new Error(error?.message || 'Send failed'));
           return;
         }
@@ -957,9 +1316,13 @@ class WhatsAppService {
     const max = Math.max(min, bulk ? config.whatsapp.bulkMaxSendDelayMs : config.whatsapp.maxSendDelayMs);
     const gap = randomBetween(min, max);
 
+    // Separate cursors per lane: a bulk run reserving minute-wide slots must not
+    // push interactive sends into the future.
     const now = Date.now();
-    const slot = Math.max(now, session.nextSlotAt);
-    session.nextSlotAt = slot + gap;
+    const cursor = bulk ? session.nextBulkSlotAt : session.nextSlotAt;
+    const slot = Math.max(now, cursor);
+    if (bulk) session.nextBulkSlotAt = slot + gap;
+    else session.nextSlotAt = slot + gap;
 
     const wait = slot - now;
     if (wait > 0) await sleep(wait);

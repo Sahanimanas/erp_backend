@@ -9,6 +9,12 @@ export interface WhatsAppSessionState {
   lastError?: string;
   /** Live send-queue / delivery health for monitoring dashboards. */
   health?: WhatsAppHealth;
+  /**
+   * WhatsApp logged this number out (or reconnects were exhausted). Nothing will
+   * auto-reconnect until an admin deliberately relinks — repeatedly
+   * re-registering a number is itself a ban signal.
+   */
+  requiresRelink?: boolean;
 }
 
 export interface WhatsAppHealth {

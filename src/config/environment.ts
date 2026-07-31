@@ -113,12 +113,28 @@ export const config = {
     bulkMaxSendDelayMs: parseInt(process.env.WHATSAPP_BULK_MAX_SEND_DELAY_MS || '75000', 10),
     // Number of concurrent sends per account (WhatsApp tolerates 1–2; keep low).
     sendConcurrency: parseInt(process.env.WHATSAPP_SEND_CONCURRENCY || '1', 10),
+    // Check the recipient actually has a WhatsApp account before sending.
+    // WhatsApp ACCEPTS a send to an unregistered number and delivers nothing, so
+    // without this a bad number is reported as sent. Escape hatch: set to
+    // "false" if the lookup ever starts rejecting numbers that do work.
+    verifyRecipient: (process.env.WHATSAPP_VERIFY_RECIPIENT || 'true') !== 'false',
+    // Baileys' own log level. 'silent' in normal operation; set to 'debug' to
+    // see the protocol traffic (stanzas, acks, key uploads) when diagnosing a
+    // session that looks connected but isn't delivering.
+    logLevel: process.env.WHATSAPP_LOG_LEVEL || 'silent',
     // Exponential backoff for a failed send: base * 2^attempt (+ jitter), capped.
     sendRetries: parseInt(process.env.WHATSAPP_SEND_RETRIES || '3', 10),
     sendRetryBaseMs: parseInt(process.env.WHATSAPP_SEND_RETRY_BASE_MS || '2000', 10),
     // Exponential backoff for reconnecting a dropped socket (never deletes creds).
     reconnectBaseMs: parseInt(process.env.WHATSAPP_RECONNECT_BASE_MS || '2000', 10),
     reconnectMaxMs: parseInt(process.env.WHATSAPP_RECONNECT_MAX_MS || '60000', 10),
+    // Give up after this many consecutive failed reconnects and wait for a
+    // deliberate relink. An endless reconnect loop re-registers the number over
+    // and over, which WhatsApp reads as suspicious and bans for.
+    reconnectMaxAttempts: parseInt(process.env.WHATSAPP_RECONNECT_MAX_ATTEMPTS || '8', 10),
+    // Minimum gap between two socket-start attempts for the same school. Status
+    // polling used to be able to spawn a start on every request.
+    startCooldownMs: parseInt(process.env.WHATSAPP_START_COOLDOWN_MS || '15000', 10),
   },
 
   // Domain

@@ -43,6 +43,26 @@ export class WhatsAppController {
     }
   }
 
+  /** Cancel every queued send for this school (keeps the number linked). */
+  async cancelPending(req: Request, res: Response): Promise<void> {
+    try {
+      const schoolId = req.user?.schoolId;
+      if (!schoolId) return void errorResponse(res, 400, 'Authentication required');
+
+      const result = whatsappService.cancelPending(schoolId);
+      successResponse(
+        res,
+        200,
+        result,
+        result.cancelled
+          ? `Cancelled ${result.cancelled} pending message(s)`
+          : 'Nothing was waiting in the queue'
+      );
+    } catch (error: any) {
+      errorResponse(res, 400, error.message || 'Failed to cancel pending sends');
+    }
+  }
+
   /** Request an 8-digit pairing code instead of scanning a QR. */
   async pairingCode(req: Request, res: Response): Promise<void> {
     try {

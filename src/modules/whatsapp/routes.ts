@@ -22,6 +22,11 @@ router.get('/stats', requireAuth, adminOnly, async (req, res) => {
   await whatsappController.stats(req, res);
 });
 
+// Emergency stop: drop everything still queued without unlinking the number.
+router.post('/cancel-pending', requireAuth, adminOnly, async (req, res) => {
+  await whatsappController.cancelPending(req, res);
+});
+
 router.post('/pairing-code', requireAuth, adminOnly, async (req, res) => {
   await whatsappController.pairingCode(req, res);
 });
