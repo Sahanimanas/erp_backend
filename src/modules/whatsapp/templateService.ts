@@ -83,9 +83,16 @@ export class WhatsAppTemplateService {
  */
 export async function broadcastToStudents(
   schoolId: string,
-  data: { message: string; classId?: string; sectionId?: string; studentIds?: string[] }
+  data: {
+    message?: string;
+    classId?: string;
+    sectionId?: string;
+    studentIds?: string[];
+    /** Optional attachment: an uploaded `mediaId`, a public `url`, or base64. */
+    media?: { mediaId?: string; url?: string; data?: string; mediaType?: any; filename?: string; mimetype?: string; caption?: string };
+  }
 ): Promise<{ recipients: number; queued: number; skippedNoPhone: number }> {
-  if (!data.message?.trim()) throw new Error('Message is required');
+  if (!data.message?.trim() && !data.media) throw new Error('Message or attachment is required');
 
   const where: any = { schoolId, deletedAt: null };
   if (Array.isArray(data.studentIds) && data.studentIds.length) where.id = { in: data.studentIds };
@@ -102,9 +109,19 @@ export async function broadcastToStudents(
   const skippedNoPhone = students.length - students.filter((s) => s.user?.phone).length;
   if (!phones.length) throw new Error('None of the selected students have a phone number');
 
+  // An attachment carries the text as its caption, so a "notice + PDF" broadcast
+  // is ONE message per parent rather than two — half the send volume for the
+  // school's number, which is the resource the anti-ban caps ration.
+  const content = data.media
+    ? whatsappService.buildMediaContent(schoolId, {
+        ...data.media,
+        caption: data.media.caption ?? data.message,
+      })
+    : { text: data.message as string };
+
   // Fire-and-forget: queue everyone and return right away. The queue sends them
   // ≈1 min apart in the background, so a big class never holds the request open.
-  const { queued } = whatsappService.enqueueBulk(schoolId, phones, { text: data.message });
+  const { queued } = whatsappService.enqueueBulk(schoolId, phones, content);
   return { recipients: phones.length, queued, skippedNoPhone };
 }
 

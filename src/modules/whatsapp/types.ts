@@ -20,6 +20,17 @@ export interface WhatsAppSessionState {
 export interface WhatsAppHealth {
   /** Messages waiting in this account's serial send queue. */
   queued: number;
+  /** Messages sent by this number today, against the anti-ban daily cap. */
+  usedToday: number;
+  /** Today's effective cap (reduced while a freshly linked number warms up). */
+  dailyCap: number;
+  /** Messages sent in the current clock hour, against the hourly cap. */
+  usedThisHour: number;
+  hourlyCap: number;
+  /** Set while the account is parked after repeated failures / a rate limit. */
+  cooldownUntil?: string;
+  /** Bulk sends dropped because they repeated a recent identical message. */
+  skippedDuplicates: number;
   /** Total accepted by the WhatsApp server since the socket came up. */
   sent: number;
   /** Delivered acknowledgements received (double tick). */
@@ -45,7 +56,10 @@ export interface SendTextRequest {
 
 export interface SendMediaRequest {
   to: string;
-  mediaType: MediaType;
+  /** May be omitted when `mediaId` is given — it is inferred from the file. */
+  mediaType?: MediaType;
+  /** Id returned by `POST /whatsapp/media` — the file-sharing path. */
+  mediaId?: string;
   /** Public URL of the media. Mutually exclusive with `data`. */
   url?: string;
   /** Base64-encoded media bytes. Mutually exclusive with `url`. */

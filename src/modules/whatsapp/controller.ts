@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import whatsappService from './service';
 import templateService, { broadcastToStudents } from './templateService';
 import { successResponse, errorResponse } from '@common/utils/response';
+import { registerUpload, ALLOWED_EXTENSIONS } from './media';
+import { config } from '@config/environment';
 import type { AnyMessageContent } from '@whiskeysockets/baileys';
 
 export class WhatsAppController {
@@ -108,13 +110,54 @@ export class WhatsAppController {
     }
   }
 
+  /**
+   * Upload a file once and get a `mediaId` back. Sending then quotes the id, so
+   * a 20 MB PDF is transferred to the server a single time no matter how many
+   * parents it goes to (the browser can't practically base64 it per recipient).
+   */
+  async uploadMedia(req: Request, res: Response): Promise<void> {
+    try {
+      const schoolId = req.user?.schoolId;
+      if (!schoolId) return void errorResponse(res, 400, 'Authentication required');
+      if (!req.file) {
+        return void errorResponse(
+          res,
+          400,
+          `No file received. Allowed types: ${ALLOWED_EXTENSIONS.join(', ')} (max ${Math.round(config.whatsapp.mediaMaxBytes / 1024 / 1024)} MB).`
+        );
+      }
+
+      const stored = registerUpload(schoolId, req.file);
+      successResponse(
+        res,
+        201,
+        {
+          mediaId: stored.mediaId,
+          filename: stored.filename,
+          mimetype: stored.mimetype,
+          mediaType: stored.mediaType,
+          size: stored.size,
+        },
+        'File uploaded — it can now be sent to one number or broadcast'
+      );
+    } catch (error: any) {
+      errorResponse(res, 400, error.message || 'Upload failed');
+    }
+  }
+
   /** Send media (image / video / audio / document) to one recipient. */
   async sendMedia(req: Request, res: Response): Promise<void> {
     try {
       const schoolId = req.user?.schoolId;
-      const { to, mediaType } = req.body;
+      const { to, mediaType, mediaId, url, data } = req.body;
       if (!schoolId) return void errorResponse(res, 400, 'Authentication required');
-      if (!to || !mediaType) return void errorResponse(res, 400, '"to" and "mediaType" are required');
+      if (!to) return void errorResponse(res, 400, '"to" is required');
+      // mediaType is inferred from an uploaded file, so it is only required when
+      // the caller supplies a raw URL / base64 payload.
+      if (!mediaId && !url && !data) {
+        return void errorResponse(res, 400, 'Provide "mediaId", "url" or base64 "data"');
+      }
+      if (!mediaId && !mediaType) return void errorResponse(res, 400, '"mediaType" is required for url/data sends');
 
       const messageId = await whatsappService.sendMedia(schoolId, req.body);
       successResponse(res, 200, { to, messageId }, 'Media sent');
@@ -136,9 +179,11 @@ export class WhatsAppController {
         return void errorResponse(res, 400, 'Provide "message" or "media"');
       }
 
-      const content: AnyMessageContent = message
-        ? { text: message }
-        : this.buildMediaContent(media);
+      // A caption'd file is a single WhatsApp message — send the media with the
+      // text attached rather than two messages (half the volume, same result).
+      const content: AnyMessageContent = media
+        ? whatsappService.buildMediaContent(schoolId, { ...media, caption: media.caption ?? message })
+        : { text: message };
 
       // Fire-and-forget: queue all recipients and return at once; the queue paces
       // them ≈1 min apart in the background (holding the request would time out).
@@ -174,26 +219,6 @@ export class WhatsAppController {
     catch (error: any) { errorResponse(res, error.message.includes('not found') ? 404 : 400, error.message); }
   }
 
-  private buildMediaContent(media: any): AnyMessageContent {
-    const src = media.url ? { url: media.url } : Buffer.from(media.data as string, 'base64');
-    switch (media.mediaType) {
-      case 'image':
-        return { image: src as any, caption: media.caption };
-      case 'video':
-        return { video: src as any, caption: media.caption };
-      case 'audio':
-        return { audio: src as any, mimetype: media.mimetype || 'audio/mp4' };
-      case 'document':
-        return {
-          document: src as any,
-          caption: media.caption,
-          fileName: media.filename || 'document',
-          mimetype: media.mimetype || 'application/octet-stream',
-        };
-      default:
-        throw new Error(`Unsupported media type: ${media.mediaType}`);
-    }
-  }
 }
 
 export default new WhatsAppController();

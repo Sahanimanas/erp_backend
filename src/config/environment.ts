@@ -118,6 +118,11 @@ export const config = {
     // without this a bad number is reported as sent. Escape hatch: set to
     // "false" if the lookup ever starts rejecting numbers that do work.
     verifyRecipient: (process.env.WHATSAPP_VERIFY_RECIPIENT || 'true') !== 'false',
+    // Address recipients by their `@lid` identity instead of their phone JID.
+    // Baileys 6.x CANNOT deliver to a `@lid` address (the send is accepted and
+    // silently dropped), so this must stay false until the library is on 7.x.
+    // Turn it on after that upgrade, or if sends start failing with error 463.
+    preferLid: (process.env.WHATSAPP_PREFER_LID || 'false') === 'true',
     // Baileys' own log level. 'silent' in normal operation; set to 'debug' to
     // see the protocol traffic (stanzas, acks, key uploads) when diagnosing a
     // session that looks connected but isn't delivering.
@@ -135,6 +140,44 @@ export const config = {
     // Minimum gap between two socket-start attempts for the same school. Status
     // polling used to be able to spawn a start on every request.
     startCooldownMs: parseInt(process.env.WHATSAPP_START_COOLDOWN_MS || '15000', 10),
+
+    // ── Volume caps (the single biggest ban lever) ─────────────────────────
+    // A personal number that suddenly sends hundreds of messages a day is the
+    // classic ban profile. Sends are refused once the school's number reaches
+    // the daily cap, and the queue parks until the next hour once it reaches
+    // the hourly one — nothing is silently dropped.
+    dailySendCap: parseInt(process.env.WHATSAPP_DAILY_SEND_CAP || '400', 10),
+    hourlySendCap: parseInt(process.env.WHATSAPP_HOURLY_SEND_CAP || '60', 10),
+    // Warm-up: a freshly linked number starts at `warmupStartCap` messages/day
+    // and ramps to the full cap over `warmupDays`. New numbers are the ones
+    // WhatsApp blocks fastest, so the first week is deliberately conservative.
+    warmupDays: parseInt(process.env.WHATSAPP_WARMUP_DAYS || '7', 10),
+    warmupStartCap: parseInt(process.env.WHATSAPP_WARMUP_START_CAP || '50', 10),
+    // Show "typing…" for a moment before each send. Cheap, and it makes the
+    // traffic pattern look like a person rather than a script.
+    simulateTyping: (process.env.WHATSAPP_SIMULATE_TYPING || 'true') !== 'false',
+    // Circuit breaker: after this many consecutive send failures (or any
+    // explicit rate-limit error) the account stops sending for `cooldownMs`.
+    // Hammering on through a rate-limit is what turns a warning into a ban.
+    failureCooldownAfter: parseInt(process.env.WHATSAPP_FAILURE_COOLDOWN_AFTER || '5', 10),
+    cooldownMs: parseInt(process.env.WHATSAPP_COOLDOWN_MS || '900000', 10), // 15 min
+    // Drop a bulk message that repeats the exact same content to the same
+    // number inside this window (double-clicked broadcasts are a spam signal).
+    duplicateWindowMs: parseInt(process.env.WHATSAPP_DUPLICATE_WINDOW_MS || '300000', 10), // 5 min
+    // Optional quiet hours for the BULK lane, as local hours (0–23), e.g.
+    // WHATSAPP_QUIET_START=21, WHATSAPP_QUIET_END=8 holds broadcasts overnight.
+    // Empty (default) = send around the clock.
+    quietStartHour: process.env.WHATSAPP_QUIET_START ? parseInt(process.env.WHATSAPP_QUIET_START, 10) : null,
+    quietEndHour: process.env.WHATSAPP_QUIET_END ? parseInt(process.env.WHATSAPP_QUIET_END, 10) : null,
+
+    // ── Media / file sharing ───────────────────────────────────────────────
+    // Uploaded attachments are stored per school and referenced by mediaId, so
+    // a 20 MB PDF is uploaded once and reused for the whole broadcast.
+    mediaDir: resolveBackendPath(process.env.WHATSAPP_MEDIA_DIR || 'storage/whatsapp-media'),
+    mediaMaxBytes: parseInt(process.env.WHATSAPP_MEDIA_MAX_BYTES || String(64 * 1024 * 1024), 10),
+    // Uploaded files are swept after this many days (a queued broadcast only
+    // needs them for a few hours).
+    mediaRetentionDays: parseInt(process.env.WHATSAPP_MEDIA_RETENTION_DAYS || '7', 10),
   },
 
   // Domain
