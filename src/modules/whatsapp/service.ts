@@ -1202,7 +1202,10 @@ class WhatsAppService {
    * a document arrives as "Fee-Receipt-May.pdf" rather than "document".
    */
   buildMediaContent(schoolId: string, req: Omit<SendMediaRequest, 'to'>): AnyMessageContent {
-    let { mediaType, url, data, caption, filename, mimetype } = req;
+    // `data` / `caption` are used as given; the rest are filled in from the
+    // uploaded file below when only a mediaId was supplied.
+    const { data, caption } = req;
+    let { mediaType, url, filename, mimetype } = req;
 
     // Uploaded attachment: fill in everything we already know about the file.
     if (req.mediaId) {
