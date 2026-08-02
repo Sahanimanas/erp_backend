@@ -12,6 +12,7 @@ import {
   RESERVED_SUBDOMAINS,
 } from '@common/constants/reservedSubdomains';
 import { MODULE_KEYS } from '@common/constants/modules';
+import { sendMail, schoolWelcomeEmail } from '@common/utils/mailer';
 import {
   CreateSchoolRequest,
   UpdateSchoolRequest,
@@ -194,6 +195,25 @@ export class AdminService {
       return { school, adminUser, domain, subscription };
     });
 
+    // Email the new school its login details. Sent AFTER the transaction has
+    // committed (never mail credentials for a school that might roll back) and
+    // awaited only so the operator learns whether it actually went out —
+    // sendMail never throws, so a mail outage can't undo a created school.
+    const loginUrl = `https://${result.domain.domain}`;
+    const welcome = schoolWelcomeEmail({
+      schoolName: result.school.name,
+      loginUrl,
+      // `adminEmail` (not the nullable column) — it IS the login username.
+      username: adminEmail,
+      password: generatedPassword,
+      adminName: [result.adminUser.firstName, result.adminUser.lastName].filter(Boolean).join(' ').trim(),
+    });
+    const mail = await sendMail({
+      to: adminEmail,
+      subject: welcome.subject,
+      html: welcome.html,
+    });
+
     return {
       ...result.school,
       domain: result.domain,
@@ -203,6 +223,13 @@ export class AdminService {
         email: result.adminUser.email,
         // Surface the generated password ONCE so the operator can hand it over.
         temporaryPassword: data.adminPassword ? undefined : generatedPassword,
+      },
+      // So the superadmin UI can say "credentials emailed" — or show why not,
+      // rather than leaving the operator to assume the school was notified.
+      credentialsEmail: {
+        sent: mail.sent,
+        to: adminEmail,
+        error: mail.error,
       },
     };
   }
