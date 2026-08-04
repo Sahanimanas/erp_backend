@@ -78,7 +78,11 @@ export class AdminService {
    * transaction so a partial failure never leaves an orphaned tenant.
    */
   async createSchool(data: CreateSchoolRequest) {
-    const { name, email } = data;
+    const { name } = data;
+    // Normalised once, up front: this value is both the school's contact email
+    // and (when no separate adminEmail is given) the admin's login username, so
+    // it must be stored in the same canonical form the login lookup uses.
+    const email = (data.email || '').trim().toLowerCase();
 
     // Resolve and validate the subdomain (slug).
     const subdomain = (data.subdomain?.trim().toLowerCase()) || generateSchoolSlug(name);
@@ -467,6 +471,33 @@ export class AdminService {
           data: { domain: this.tombstone(d.domain, d.id), isActive: false },
         });
       }
+
+      // Retire the tenant's user accounts as well. Without this they stay
+      // active with their original emails, so re-creating a school on the same
+      // admin email leaves two live accounts sharing it — and login could match
+      // the stale one, rejecting the new (or freshly reset) password.
+      // Emails are left intact so the records stay auditable; login filters on
+      // deletedAt instead.
+      // SUPER_ADMINs are platform staff who merely hang off a tenant row — never
+      // disable them along with the tenant, or deleting that school locks the
+      // platform operator out entirely.
+      const users = await tx.user.findMany({
+        where: { schoolId, role: { not: 'SUPER_ADMIN' } },
+        select: { id: true },
+      });
+      const userIds = users.map((u) => u.id);
+      if (userIds.length) {
+        await tx.user.updateMany({
+          where: { id: { in: userIds }, deletedAt: null },
+          data: { deletedAt: new Date(), isActive: false },
+        });
+        // Kill any live session belonging to the deleted tenant.
+        await tx.refreshToken.updateMany({
+          where: { userId: { in: userIds }, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+      }
+
       return updated;
     });
   }

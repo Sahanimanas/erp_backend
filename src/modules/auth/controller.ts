@@ -23,7 +23,12 @@ export class AuthController {
 
       createdResponse(res, result, 'Login successful');
     } catch (error: any) {
-      if (error.message === 'Invalid email or password') {
+      // Every credential-rejection reason (bad password, deactivated account,
+      // deleted school) is a 401 the user can act on — not a server fault.
+      if (
+        error.message === 'Invalid email or password' ||
+        /deactivated|has been removed/i.test(error.message || '')
+      ) {
         return void errorResponse(res, 401, error.message);
       }
       errorResponse(res, 500, error.message || 'Login failed');

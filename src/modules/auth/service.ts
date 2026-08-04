@@ -21,29 +21,58 @@ export class AuthService {
    * Login user
    */
   async login(data: LoginRequest): Promise<AuthResponse> {
-    const { email, password, deviceId } = data;
+    const { password, deviceId } = data;
+    // Emails are stored in whatever case they were entered — school admins are
+    // lower-cased at creation, staff/students are not — so the lookup below is
+    // case-insensitive and the typed value is only trimmed. Matching exactly is
+    // what made "Admin@School.com" fail against a stored "admin@school.com".
+    const email = (data.email || '').trim();
 
-    // Find user
-    const user = await db.user.findFirst({
+    // The same email may legitimately exist in more than one tenant
+    // (@@unique([email, schoolId]) is per-school), so match ALL candidates and
+    // let the password decide which account is meant — a single findFirst could
+    // land on a stale account (e.g. one left behind by a deleted school) and
+    // reject a perfectly valid password.
+    const candidates = await db.user.findMany({
       where: {
-        email,
+        email: { equals: email, mode: 'insensitive' },
         isActive: true,
+        deletedAt: null,
       },
       include: {
         student: true,
         employee: { include: { designation: { select: { permissions: true } } } },
         parent: true,
-        school: { select: { id: true, name: true, logo: true, watermark: true, upiQr: true, address: true, phone: true, email: true } },
+        school: { select: { id: true, name: true, logo: true, watermark: true, upiQr: true, address: true, phone: true, email: true, deletedAt: true } },
       },
     });
 
-    if (!user) {
-      throw new Error('Invalid email or password');
+    // Order the tie-break: a live school beats a soft-deleted one, then newest
+    // first. Users of a deleted school are ranked last rather than filtered out
+    // — the platform's own SUPER_ADMIN tenant is soft-deleted, and excluding
+    // them would lock the super admin out.
+    candidates.sort((a, b) => {
+      const aDead = (a as any).school?.deletedAt ? 1 : 0;
+      const bDead = (b as any).school?.deletedAt ? 1 : 0;
+      if (aDead !== bDead) return aDead - bDead;
+      return b.createdAt.getTime() - a.createdAt.getTime();
+    });
+
+    // Verify password against each candidate.
+    let user: (typeof candidates)[number] | null = null;
+    for (const candidate of candidates) {
+      if (await comparePassword(password, candidate.password)) {
+        user = candidate;
+        break;
+      }
     }
 
-    // Verify password
-    const isPasswordValid = await comparePassword(password, user.password);
-    if (!isPasswordValid) {
+    if (!user) {
+      // The credentials may belong to an account that exists but can no longer
+      // sign in (deactivated user, or a school that was deleted). Saying so —
+      // only to someone who already proved they know the password — turns an
+      // otherwise unexplainable "invalid credentials" into something actionable.
+      await this.assertNotDisabledAccount(email, password);
       throw new Error('Invalid email or password');
     }
 
@@ -134,6 +163,35 @@ export class AuthService {
         permissions: (user as any).employee?.designation?.permissions ?? null,
       },
     };
+  }
+
+  /**
+   * Throw a specific error when the supplied credentials DO match an account
+   * that is barred from logging in (deactivated user, soft-deleted user, or a
+   * user whose school was deleted). Only ever reached after the normal lookup
+   * failed, and only speaks up when the password checks out — so it reveals
+   * nothing to someone guessing.
+   */
+  private async assertNotDisabledAccount(email: string, password: string): Promise<void> {
+    const disabled = await db.user.findMany({
+      where: {
+        email: { equals: email, mode: 'insensitive' },
+        OR: [{ isActive: false }, { deletedAt: { not: null } }],
+      },
+      select: { id: true, password: true, deletedAt: true, school: { select: { deletedAt: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    for (const account of disabled) {
+      if (await comparePassword(password, account.password)) {
+        if (account.school?.deletedAt) {
+          throw new Error(
+            'This account belongs to a school that has been removed. Please use the credentials for your current school.'
+          );
+        }
+        throw new Error('Your account has been deactivated. Please contact your administrator.');
+      }
+    }
   }
 
   /**
