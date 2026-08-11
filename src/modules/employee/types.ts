@@ -35,19 +35,39 @@ export interface CreateEmployeeRequest {
   experiences?: EmployeeExperienceInput[];
 }
 
+/**
+ * Every field the edit form can post. Blank strings are accepted and mean
+ * "clear it" (nullable columns) or "leave unchanged" (required ones) — see
+ * EmployeeService.updateEmployee.
+ */
 export interface UpdateEmployeeRequest {
+  // User account fields
   firstName?: string;
   lastName?: string;
   email?: string;
+  phone?: string;
+  role?: string;
+  // Employee fields
+  employeeCode?: string;
   departmentId?: string;
   designationId?: string;
-  dateOfBirth?: Date;
+  reportingToId?: string;
+  dateOfBirth?: Date | string;
+  dateOfJoining?: Date | string;
   gender?: string;
   bloodGroup?: string;
+  city?: string;
+  address?: string;
+  permanentAddress?: string;
+  fatherName?: string;
+  husbandName?: string;
+  qualification?: string;
+  rfidNumber?: string;
+  aadharNumber?: string;
   panNumber?: string;
   bankAccount?: string;
   ifscCode?: string;
-  baseSalary?: number;
+  baseSalary?: number | string;
   photo?: string;
 }
 

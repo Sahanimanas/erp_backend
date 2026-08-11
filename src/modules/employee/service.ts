@@ -155,19 +155,74 @@ export class EmployeeService {
       throw new Error('Employee not found');
     }
 
-    const updateData: any = { ...data };
-    if (data.baseSalary) {
-      updateData.baseSalary = BigInt(data.baseSalary);
+    const raw = data as any;
+
+    // The edit form posts every field it renders, blanks included. Treat a blank
+    // string as "clear this" for nullable columns and "leave alone" for required
+    // ones — never as a literal "" (Prisma rejects it for dates/BigInt).
+    const blank = (v: any) => v === undefined || v === null || (typeof v === 'string' && v.trim() === '');
+    const toDate = (v: any, field: string) => {
+      const d = new Date(v);
+      if (isNaN(d.getTime())) throw new Error(`Invalid ${field}`);
+      return d;
+    };
+
+    const updateData: any = {};
+
+    // Only Employee's own scalar columns may go into employee.update — name,
+    // email and phone live on the linked User and are handled below.
+    const NULLABLE_FIELDS = [
+      'departmentId', 'designationId', 'reportingToId', 'gender', 'bloodGroup', 'city',
+      'address', 'permanentAddress', 'fatherName', 'husbandName', 'qualification',
+      'rfidNumber', 'aadharNumber', 'panNumber', 'bankAccount', 'ifscCode', 'photo',
+    ];
+    for (const field of NULLABLE_FIELDS) {
+      if (raw[field] !== undefined) {
+        updateData[field] = blank(raw[field]) ? null : String(raw[field]).trim();
+      }
     }
 
-    if (data.firstName || data.lastName || data.email) {
-      updateData.user = {
-        update: {
-          firstName: data.firstName,
-          lastName: data.lastName,
-          email: data.email,
-        },
-      };
+    // employeeCode and dateOfJoining are NOT NULL — a blank simply means unchanged.
+    if (!blank(raw.employeeCode)) updateData.employeeCode = String(raw.employeeCode).trim();
+    if (!blank(raw.dateOfJoining)) updateData.dateOfJoining = toDate(raw.dateOfJoining, 'date of joining');
+
+    if (raw.dateOfBirth !== undefined) {
+      updateData.dateOfBirth = blank(raw.dateOfBirth) ? null : toDate(raw.dateOfBirth, 'date of birth');
+    }
+
+    if (raw.baseSalary !== undefined) {
+      if (blank(raw.baseSalary)) {
+        updateData.baseSalary = null;
+      } else {
+        const salary = Number(raw.baseSalary);
+        if (isNaN(salary) || salary < 0) throw new Error('Invalid base salary');
+        updateData.baseSalary = BigInt(Math.trunc(salary));
+      }
+    }
+
+    // Name / email / phone / role belong to the linked User account.
+    const userData: any = {};
+    if (!blank(raw.firstName)) userData.firstName = String(raw.firstName).trim();
+    if (!blank(raw.lastName)) userData.lastName = String(raw.lastName).trim();
+    if (raw.phone !== undefined) userData.phone = blank(raw.phone) ? null : String(raw.phone).trim();
+
+    const VALID_ROLES = ['SCHOOL_ADMIN', 'PRINCIPAL', 'TEACHER', 'ACCOUNTANT'];
+    if (!blank(raw.role) && VALID_ROLES.includes(raw.role)) userData.role = raw.role;
+
+    if (!blank(raw.email)) {
+      const email = String(raw.email).trim();
+      // Email is unique per school — check first so the user gets a readable
+      // message instead of a raw constraint violation.
+      const clash = await db.user.findFirst({
+        where: { schoolId, email, NOT: { id: employee.userId } },
+        select: { id: true },
+      });
+      if (clash) throw new Error('Email already exists');
+      userData.email = email;
+    }
+
+    if (Object.keys(userData).length) {
+      updateData.user = { update: userData };
     }
 
     const updated = await db.employee.update({
@@ -176,9 +231,12 @@ export class EmployeeService {
       include: {
         user: {
           select: {
+            id: true,
             firstName: true,
             lastName: true,
             email: true,
+            phone: true,
+            role: true,
           },
         },
         department: true,
