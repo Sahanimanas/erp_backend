@@ -696,6 +696,7 @@ model Employee {
   leaves          Leave[]
   leaveAssignments LeaveAssignment[]
   payslips        Payslip[]
+  salaryPayments  SalaryPayment[]
   experiences     EmployeeExperience[]
   invigilations   ExamSchedule[]
 
@@ -731,6 +732,7 @@ model Department {
   deletedAt DateTime?
 
   employees Employee[]
+  salary    DepartmentSalary?
 
   @@unique([schoolId, name])
   @@index([schoolId])
@@ -873,6 +875,68 @@ model Payslip {
   @@unique([schoolId, employeeId, month, year])
   @@index([schoolId])
   @@index([employeeId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// EMPLOYEE SALARY MANAGEMENT
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Department-wide monthly salary template. One row per department; it is the
+/// fallback rate for every employee in that department who has no individual
+/// `Employee.baseSalary` of their own.
+model DepartmentSalary {
+  id           String   @id @default(cuid())
+  schoolId     String
+  departmentId String   @unique
+  /// Monthly basic pay, in whole rupees.
+  basicSalary  BigInt
+  /// Monthly allowances added on top of basic (HRA, DA, …).
+  allowances   BigInt   @default(0)
+  /// Monthly deductions taken off (PF, TDS, …).
+  deductions   BigInt   @default(0)
+  remarks      String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId])
+}
+
+/// One salary disbursement covering one or more months of a single year.
+/// `months` holds the selected month numbers (1–12); the payable total is
+/// `months.length × (monthlySalary + allowances − deductions)`, frozen at the
+/// moment of payment so later structure edits never rewrite history.
+model SalaryPayment {
+  id            String    @id @default(cuid())
+  schoolId      String
+  employeeId    String
+  year          Int
+  /// Month numbers 1–12 this payment covers.
+  months        Int[]
+  monthCount    Int
+  /// Per-month rate applied, captured at payment time.
+  monthlySalary BigInt
+  allowances    BigInt    @default(0)
+  deductions    BigInt    @default(0)
+  /// monthCount × (monthlySalary + allowances − deductions)
+  totalAmount   BigInt
+  /// CASH | BANK_TRANSFER | CHEQUE | UPI | ONLINE
+  paymentMode   String
+  /// PAID (disbursed) | PENDING (saved, not yet disbursed)
+  status        String    @default("PAID")
+  paidDate      DateTime?
+  remarks       String?
+  createdBy     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId])
+  @@index([employeeId])
+  @@index([schoolId, year])
 }
 
 // ─────────────────────────────────────────────────────────────────────────
