@@ -251,13 +251,27 @@ export class AttendanceService {
   }
 
   /**
-   * Roster of students (optionally one section) with their status for a date.
-   * Powers the Student Attendance marking grid and All-Student daily view.
+   * Roster of students with their status for a date, optionally narrowed to one
+   * section, one class (all its sections) and/or an academic session.
+   * Powers the Student Attendance / Manual Attendance marking grids and the
+   * All-Student daily view.
+   *
+   * `session` is free-text on the student record (see schema) and is often left
+   * blank, so students with no session are kept in the roster — only students
+   * explicitly belonging to a *different* session are filtered out.
    */
-  async getStudentsWithStatus(schoolId: string, date: any, sectionId?: string) {
+  async getStudentsWithStatus(
+    schoolId: string,
+    date: any,
+    sectionId?: string,
+    classId?: string,
+    session?: string
+  ) {
     const day = dayStart(date);
     const where: any = { schoolId, deletedAt: null };
     if (sectionId) where.sectionId = sectionId;
+    else if (classId) where.section = { classId };
+    if (session) where.OR = [{ session }, { session: null }, { session: '' }];
 
     const students = await db.student.findMany({
       where,
@@ -268,7 +282,11 @@ export class AttendanceService {
       orderBy: { rollNumber: 'asc' },
     });
     const records = await db.studentAttendance.findMany({
-      where: { schoolId, date: { gte: day, lt: dayEnd(day) }, ...(sectionId ? { student: { sectionId } } : {}) },
+      where: {
+        schoolId,
+        date: { gte: day, lt: dayEnd(day) },
+        studentId: { in: students.map((s) => s.id) },
+      },
     });
     const byStudent = new Map(records.map((r) => [r.studentId, r]));
 

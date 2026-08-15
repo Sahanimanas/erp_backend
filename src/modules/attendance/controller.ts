@@ -167,8 +167,10 @@ export class AttendanceController {
       const schoolId = req.user?.schoolId;
       const date = (req.query.date as string) || new Date().toISOString();
       const sectionId = req.query.sectionId as string | undefined;
+      const classId = req.query.classId as string | undefined;
+      const session = req.query.session as string | undefined;
       if (!schoolId) return void errorResponse(res, 400, 'School context required');
-      const rows = await attendanceService.getStudentsWithStatus(schoolId, date, sectionId);
+      const rows = await attendanceService.getStudentsWithStatus(schoolId, date, sectionId, classId, session);
       successResponse(res, 200, rows);
     } catch (error: any) {
       errorResponse(res, 400, error.message || 'Failed to load students');
