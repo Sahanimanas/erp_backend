@@ -109,12 +109,20 @@ export class AuthController {
         return void errorResponse(res, 400, 'Old and new passwords are required');
       }
 
-      await authService.changePassword(userId, {
+      const changed = await authService.changePassword(userId, {
         oldPassword,
         newPassword,
       });
 
-      successResponse(res, 200, null, 'Password changed successfully');
+      // Name the account. The password belongs to whoever the access token
+      // identifies — say so, or a Super Admin who meant to change a school's
+      // password walks away having silently changed their own.
+      successResponse(
+        res,
+        200,
+        { email: changed.email, role: changed.role },
+        `Password changed for ${changed.email ?? 'your account'} — sign in with this email and the new password.`
+      );
     } catch (error: any) {
       const statusCode = error.message.includes('incorrect')
         ? 400

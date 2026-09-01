@@ -304,7 +304,7 @@ export class AuthService {
   async changePassword(
     userId: string,
     data: ChangePasswordRequest
-  ): Promise<void> {
+  ): Promise<{ email: string | null; role: string }> {
     const { oldPassword, newPassword } = data;
 
     // Validate new password
@@ -322,10 +322,20 @@ export class AuthService {
       throw new Error('User not found');
     }
 
-    // Verify old password
+    // Verify old password.
+    //
+    // The account named in the error is the one the ACCESS TOKEN belongs to —
+    // not necessarily the one the operator has in mind. A Super Admin who opens
+    // Change Password while still in their own session (rather than after
+    // "Login as Admin") is changing THEIR OWN password, and used to see a bare
+    // "Old password is incorrect" with no hint that they were aimed at the wrong
+    // account. Naming it costs nothing: the caller already proved they hold this
+    // account's token.
     const isPasswordValid = await comparePassword(oldPassword, user.password);
     if (!isPasswordValid) {
-      throw new Error('Old password is incorrect');
+      throw new Error(
+        `Old password is incorrect for ${user.email ?? 'this account'}. You are signed in as ${user.email ?? user.id} (${user.role}) — this form only changes THAT account's password.`
+      );
     }
 
     // Hash new password
@@ -350,6 +360,10 @@ export class AuthService {
         revokedAt: new Date(),
       },
     });
+
+    // Hand the caller the account that actually changed, so the UI can say
+    // WHICH login the new password belongs to instead of a bare "success".
+    return { email: user.email, role: user.role };
   }
 
   /**
