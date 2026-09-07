@@ -15,6 +15,30 @@ import {
   AuthResponse,
   TokenPayload,
 } from './types';
+import { config } from '@config/environment';
+
+/**
+ * expiresAt for a stored refresh token / session row, derived from the same
+ * JWT_REFRESH_EXPIRES_IN the token itself is signed with. Hardcoding 7 days
+ * here let the row claim an expiry the token did not have.
+ */
+function refreshTokenExpiresAt(): Date {
+  const raw = String(config.jwt.refreshExpiresIn ?? '365d').trim();
+  const match = /^(\d+)\s*([smhd])?$/i.exec(raw);
+  const unitMs: Record<string, number> = {
+    s: 1_000,
+    m: 60_000,
+    h: 3_600_000,
+    d: 86_400_000,
+  };
+  // Bare numbers are seconds (jsonwebtoken's own convention); anything
+  // unparseable falls back to a year rather than expiring a session early.
+  const ms = match
+    ? Number(match[1]) * unitMs[(match[2] || 's').toLowerCase()]
+    : 365 * unitMs.d;
+
+  return new Date(Date.now() + ms);
+}
 
 export class AuthService {
   /**
@@ -108,8 +132,7 @@ export class AuthService {
     const refreshToken = generateRefreshToken(user.id);
 
     // Save refresh token
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7); // 7 days
+    const expiresAt = refreshTokenExpiresAt();
 
     await db.refreshToken.create({
       data: {
@@ -121,8 +144,7 @@ export class AuthService {
 
     // Create session if deviceId provided
     if (deviceId) {
-      const expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + 7);
+      const expiresAt = refreshTokenExpiresAt();
 
       await db.userSession.create({
         data: {
@@ -265,8 +287,7 @@ export class AuthService {
     });
 
     // Save new refresh token
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
+    const expiresAt = refreshTokenExpiresAt();
 
     await db.refreshToken.create({
       data: {
