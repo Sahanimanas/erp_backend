@@ -1,9 +1,11 @@
 import { Response } from 'express';
+import { sanitizeMessage, toSafeError } from './errors';
 
 interface ResponseData {
   success: boolean;
   data?: any;
   error?: string;
+  code?: string;
   message?: string;
   pagination?: {
     page: number;
@@ -34,21 +36,42 @@ export const successResponse = (
 };
 
 /**
- * Send error response
+ * Send error response.
+ *
+ * The message is always sanitised: a raw Prisma/driver dump would otherwise be
+ * rendered verbatim in the UI. Pass `code` so the client can show a short tag
+ * next to the message.
  */
 export const errorResponse = (
   res: Response,
   statusCode: number = 400,
   error: string | string[],
-  message?: string
+  message?: string,
+  code?: string
 ): Response => {
+  const raw = Array.isArray(error) ? error.join(', ') : error;
   const response: ResponseData = {
     success: false,
-    error: Array.isArray(error) ? error.join(', ') : error,
+    error: sanitizeMessage(raw),
+    ...(code && { code }),
     ...(message && { message }),
   };
 
   return res.status(statusCode).json(response);
+};
+
+/**
+ * Send a caught error. Derives status, one-line message and short code from the
+ * thrown value (Prisma codes included) and logs the full error server-side.
+ */
+export const failResponse = (
+  res: Response,
+  err: unknown,
+  fallback = 'Request failed',
+  statusOverride?: number
+): Response => {
+  const safe = toSafeError(err, fallback);
+  return errorResponse(res, statusOverride ?? safe.status, safe.error, undefined, safe.code);
 };
 
 /**

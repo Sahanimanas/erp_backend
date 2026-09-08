@@ -172,7 +172,7 @@ export class EmployeeService {
     // Only Employee's own scalar columns may go into employee.update — name,
     // email and phone live on the linked User and are handled below.
     const NULLABLE_FIELDS = [
-      'departmentId', 'designationId', 'reportingToId', 'gender', 'bloodGroup', 'city',
+      'reportingToId', 'gender', 'bloodGroup', 'city',
       'address', 'permanentAddress', 'fatherName', 'husbandName', 'qualification',
       'rfidNumber', 'aadharNumber', 'panNumber', 'bankAccount', 'ifscCode', 'photo',
     ];
@@ -181,6 +181,42 @@ export class EmployeeService {
         updateData[field] = blank(raw[field]) ? null : String(raw[field]).trim();
       }
     }
+
+    // departmentId / designationId are relation FKs. Because this update also
+    // carries a nested `user.update`, Prisma resolves the payload against the
+    // checked EmployeeUpdateInput, which rejects raw FK scalars ("Unknown
+    // argument `departmentId`") — so they must be written as connect/disconnect.
+    const relate = async (
+      idField: 'departmentId' | 'designationId',
+      relation: 'department' | 'designation',
+      lookup: (id: string) => Promise<{ id: string } | null>,
+      label: string
+    ) => {
+      if (raw[idField] === undefined) return;
+      if (blank(raw[idField])) {
+        updateData[relation] = { disconnect: true };
+        return;
+      }
+      const id = String(raw[idField]).trim();
+      // Scoped to the school so a stale or foreign id fails with a readable
+      // message instead of a foreign-key violation.
+      const row = await lookup(id);
+      if (!row) throw new Error(`${label} not found`);
+      updateData[relation] = { connect: { id } };
+    };
+
+    await relate(
+      'departmentId',
+      'department',
+      (id) => db.department.findFirst({ where: { id, schoolId, deletedAt: null }, select: { id: true } }),
+      'Department'
+    );
+    await relate(
+      'designationId',
+      'designation',
+      (id) => db.designation.findFirst({ where: { id, schoolId, deletedAt: null }, select: { id: true } }),
+      'Designation'
+    );
 
     // employeeCode and dateOfJoining are NOT NULL — a blank simply means unchanged.
     if (!blank(raw.employeeCode)) updateData.employeeCode = String(raw.employeeCode).trim();
