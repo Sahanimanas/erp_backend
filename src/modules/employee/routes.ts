@@ -54,6 +54,8 @@ router.get('/', requireAuth, (req, res) => employeeController.listEmployees(req,
 // ── Employees (item) ──────────────────────────────────────────────────────
 router.get('/:employeeId', requireAuth, (req, res) => employeeController.getEmployeeById(req, res));
 router.put('/:employeeId', requireAuth, requireRole(...ADMIN), (req, res) => employeeController.updateEmployee(req, res));
+// Permanent, unrecoverable. `/deactivate` below only revokes the login.
+router.delete('/:employeeId', requireAuth, requireRole(...ADMIN), (req, res) => employeeController.deleteEmployee(req, res));
 router.patch('/:employeeId/deactivate', requireAuth, requireRole(...ADMIN), (req, res) => employeeController.deactivateEmployee(req, res));
 router.patch('/:employeeId/activate', requireAuth, requireRole(...ADMIN), (req, res) => employeeController.activateEmployee(req, res));
 

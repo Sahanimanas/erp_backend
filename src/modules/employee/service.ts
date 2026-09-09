@@ -1048,6 +1048,47 @@ export class EmployeeService {
   }
 
   /**
+   * Permanently delete an employee and their login.
+   *
+   * Everything with a real FK to Employee (attendance, leaves, leave
+   * assignments, payslips, salary payments, experiences) is removed by the
+   * database cascade, and ExamSchedule.invigilatorId is nulled by its SetNull
+   * rule. Three tables reference an employee id WITHOUT a foreign key, so the
+   * database cannot clean them up and they are handled here — otherwise they
+   * would be left pointing at a row that no longer exists.
+   *
+   * This is not recoverable. Use deactivateEmployee to only revoke the login.
+   */
+  async deleteEmployee(schoolId: string, employeeId: string) {
+    const employee = await db.employee.findFirst({
+      where: { id: employeeId, schoolId },
+    });
+
+    if (!employee) {
+      throw new Error('Employee not found');
+    }
+
+    await db.$transaction(async (tx) => {
+      // Loose references (no FK in the schema — Prisma will not cascade these).
+      await tx.employeeSubjectMap.deleteMany({ where: { schoolId, employeeId } });
+      // ClassSubject has no schoolId column; the employee id is a cuid so an
+      // unscoped match cannot reach another school's row.
+      await tx.classSubject.updateMany({ where: { teacherId: employeeId }, data: { teacherId: null } });
+      await tx.classTimetableCell.updateMany({ where: { schoolId, teacherId: employeeId }, data: { teacherId: null } });
+
+      // Scalar back-references to this employee held by other rows.
+      await tx.employee.updateMany({ where: { schoolId, reportingToId: employeeId }, data: { reportingToId: null } });
+      await tx.department.updateMany({ where: { schoolId, headId: employeeId }, data: { headId: null } });
+
+      // The Employee row (plus its cascades), then the login it belongs to.
+      await tx.employee.delete({ where: { id: employeeId } });
+      await tx.user.delete({ where: { id: employee.userId } });
+    });
+
+    return { message: 'Employee deleted' };
+  }
+
+  /**
    * Deactivate employee
    */
   async deactivateEmployee(schoolId: string, employeeId: string) {

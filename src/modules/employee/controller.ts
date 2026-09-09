@@ -73,6 +73,31 @@ export class EmployeeController {
     }
   }
 
+  /**
+   * Permanent delete. Refuses to remove the requester's own employee record —
+   * that would delete the login mid-request.
+   */
+  async deleteEmployee(req: Request, res: Response): Promise<void> {
+    try {
+      const schoolId = req.user?.schoolId;
+      const { employeeId } = req.params;
+
+      if (!schoolId || !employeeId) {
+        return void errorResponse(res, 400, 'Required fields missing');
+      }
+
+      const own = await employeeService.getEmployeeById(schoolId, employeeId).catch(() => null);
+      if (own && req.user?.userId && own.userId === req.user.userId) {
+        return void errorResponse(res, 400, 'You cannot delete your own employee record');
+      }
+
+      await employeeService.deleteEmployee(schoolId, employeeId);
+      deletedResponse(res, 'Employee deleted permanently');
+    } catch (error: any) {
+      failResponse(res, error, 'Failed to delete employee');
+    }
+  }
+
   async deactivateEmployee(req: Request, res: Response): Promise<void> {
     try {
       const schoolId = req.user?.schoolId;
