@@ -1,8 +1,12 @@
 import { randomUUID } from 'crypto';
 import { db } from '@common/database/client';
+import paymentsService from '../payments/service';
 import { hashPassword } from '@common/utils/crypto';
 import templateService from '../whatsapp/templateService';
 import { CreateStudentRequest, UpdateStudentRequest, UploadStudentDocumentRequest } from './types';
+
+/** Month keys used across the fee module, e.g. "Jun-2026". */
+const MONTH_RE = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\d{4}$/;
 
 export class StudentService {
   /**
@@ -426,20 +430,36 @@ export class StudentService {
   /**
    * Promote students to a target class. Each promoted student is moved to a
    * section (same name if it exists in the target class, else the first section,
-   * else a freshly-created section "A"). Returns counts.
+   * else a freshly-created section "A").
+   *
+   * `effectiveMonth` ("Jun-2026") is the month the new class's fees start
+   * applying. Before switching the class, whatever the student still owes for
+   * the months BEFORE it is computed at the OLD class's rates and frozen onto
+   * `carriedDue`; `feeStartMonth` then stops the new class charging for those
+   * same months. So a student moving mid-session owes
+   * (old dues, at old prices) + (new class fee from the promotion month on)
+   * rather than having the whole year re-priced at the new class's rate.
+   *
+   * Omitting `effectiveMonth` keeps the old behaviour: a plain class move with
+   * no carry-forward, for end-of-session promotions where nothing is owed.
    */
   async promoteStudents(
     schoolId: string,
-    data: { studentIds: string[]; toClassId: string; toSectionName?: string }
+    data: { studentIds: string[]; toClassId: string; toSectionName?: string; effectiveMonth?: string },
+    createdBy?: string
   ) {
-    const { studentIds, toClassId, toSectionName } = data;
+    const { studentIds, toClassId, toSectionName, effectiveMonth } = data;
     if (!Array.isArray(studentIds) || studentIds.length === 0) {
       throw new Error('No students selected');
+    }
+    if (effectiveMonth && !MONTH_RE.test(effectiveMonth)) {
+      throw new Error('Promotion month must look like "Jun-2026"');
     }
     const toClass = await db.class.findFirst({ where: { id: toClassId, schoolId } });
     if (!toClass) throw new Error('Target class not found');
 
     let promoted = 0;
+    let carriedTotal = 0;
     const errors: string[] = [];
 
     for (const studentId of studentIds) {
@@ -455,13 +475,48 @@ export class StudentService {
           section = await db.section.create({ data: { schoolId, classId: toClassId, name: wantName } });
         }
 
-        await db.student.update({ where: { id: studentId }, data: { sectionId: section.id } });
+        // MUST be computed before the section changes — it prices the unpaid
+        // months against the class the student is leaving.
+        const carriedDue = effectiveMonth
+          ? await paymentsService.outstandingBefore(schoolId, studentId, effectiveMonth)
+          : null;
+
+        await db.$transaction(async (tx) => {
+          await tx.student.update({
+            where: { id: studentId },
+            data: {
+              sectionId: section!.id,
+              ...(effectiveMonth && {
+                feeStartMonth: effectiveMonth,
+                carriedDue: BigInt(Math.max(0, Math.trunc(carriedDue ?? 0))),
+              }),
+            },
+          });
+
+          if (effectiveMonth) {
+            await tx.studentPromotion.create({
+              data: {
+                schoolId,
+                studentId,
+                fromSectionId: student.sectionId,
+                toSectionId: section!.id,
+                effectiveMonth,
+                carriedDue: BigInt(Math.max(0, Math.trunc(carriedDue ?? 0))),
+                previousFeeStartMonth: (student as any).feeStartMonth ?? null,
+                previousCarriedDue: (student as any).carriedDue ?? BigInt(0),
+                createdBy: createdBy ?? null,
+              },
+            });
+          }
+        });
+
+        carriedTotal += carriedDue ?? 0;
         promoted++;
       } catch (e: any) {
         errors.push(`${studentId}: ${e.message}`);
       }
     }
-    return { promoted, failed: errors.length, errors };
+    return { promoted, failed: errors.length, errors, carriedForward: carriedTotal, effectiveMonth: effectiveMonth ?? null };
   }
 
   /**
