@@ -859,7 +859,10 @@ export class PaymentsService {
       const rows = this.buildInstallmentRows(this.capStructuresForStudent(this.withTransport(structures, routeMap, s), s), this.paymentsForStudent(byStudent.get(s.id) || [], s), (s as any).admissionDate, this.carryFor(s));
       let previousDue = 0;
       let currentDue = 0;
-      const lines: { name: string; month: string; amount: number }[] = [];
+      // Fee / discount / paid behind the previous-due figure, so the demand bill
+      // can show the same Fee | Discount | Due | Paid breakdown for that line.
+      const previous = { fee: 0, discount: 0, paid: 0 };
+      const lines: { name: string; month: string; amount: number; fee: number; discount: number; paid: number }[] = [];
 
       for (const r of rows) {
         if (r.due <= 0) continue;
@@ -876,9 +879,12 @@ export class PaymentsService {
         }
         if (bucket === 'current') {
           currentDue += r.due;
-          lines.push({ name: r.name, month: r.monthLabel, amount: r.due });
+          lines.push({ name: r.name, month: r.monthLabel, amount: r.due, fee: r.totalAmount, discount: r.discount, paid: r.paid });
         } else if (bucket === 'previous') {
           previousDue += r.due;
+          previous.fee += r.totalAmount;
+          previous.discount += r.discount;
+          previous.paid += r.paid;
         }
       }
 
@@ -894,6 +900,9 @@ export class PaymentsService {
         phone: s.user?.phone ?? '',
         month: month || '',
         previousDue,
+        previousFee: previous.fee,
+        previousDiscount: previous.discount,
+        previousPaid: previous.paid,
         currentDue,
         totalDue,
         due: totalDue, // back-compat: existing UIs read `due` as the demand total
