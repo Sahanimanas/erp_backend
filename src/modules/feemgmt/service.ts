@@ -1,6 +1,6 @@
 import { db } from '@common/database/client';
 
-const DEFAULT_INCOME_HEADS = ['TUITION FEE', 'Transport', 'books', 'Admission', 'Exam', 'Hostel', 'Misc'];
+const DEFAULT_INCOME_HEADS = ['Tuition FEE', 'Transport', 'books', 'Admission', 'Registration', 'Exam', 'Hostel', 'Misc'];
 
 export class FeeMgmtService {
   // ── Fee Types (class + transport) ────────────────────────────────────────
