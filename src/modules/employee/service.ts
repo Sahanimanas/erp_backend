@@ -172,7 +172,7 @@ export class EmployeeService {
     // Only Employee's own scalar columns may go into employee.update — name,
     // email and phone live on the linked User and are handled below.
     const NULLABLE_FIELDS = [
-      'departmentId', 'designationId', 'reportingToId', 'gender', 'bloodGroup', 'city',
+      'reportingToId', 'gender', 'bloodGroup', 'city',
       'address', 'permanentAddress', 'fatherName', 'husbandName', 'qualification',
       'rfidNumber', 'aadharNumber', 'panNumber', 'bankAccount', 'ifscCode', 'photo',
     ];
@@ -181,6 +181,42 @@ export class EmployeeService {
         updateData[field] = blank(raw[field]) ? null : String(raw[field]).trim();
       }
     }
+
+    // departmentId / designationId are relation FKs. Because this update also
+    // carries a nested `user.update`, Prisma resolves the payload against the
+    // checked EmployeeUpdateInput, which rejects raw FK scalars ("Unknown
+    // argument `departmentId`") — so they must be written as connect/disconnect.
+    const relate = async (
+      idField: 'departmentId' | 'designationId',
+      relation: 'department' | 'designation',
+      lookup: (id: string) => Promise<{ id: string } | null>,
+      label: string
+    ) => {
+      if (raw[idField] === undefined) return;
+      if (blank(raw[idField])) {
+        updateData[relation] = { disconnect: true };
+        return;
+      }
+      const id = String(raw[idField]).trim();
+      // Scoped to the school so a stale or foreign id fails with a readable
+      // message instead of a foreign-key violation.
+      const row = await lookup(id);
+      if (!row) throw new Error(`${label} not found`);
+      updateData[relation] = { connect: { id } };
+    };
+
+    await relate(
+      'departmentId',
+      'department',
+      (id) => db.department.findFirst({ where: { id, schoolId, deletedAt: null }, select: { id: true } }),
+      'Department'
+    );
+    await relate(
+      'designationId',
+      'designation',
+      (id) => db.designation.findFirst({ where: { id, schoolId, deletedAt: null }, select: { id: true } }),
+      'Designation'
+    );
 
     // employeeCode and dateOfJoining are NOT NULL — a blank simply means unchanged.
     if (!blank(raw.employeeCode)) updateData.employeeCode = String(raw.employeeCode).trim();
@@ -1030,6 +1066,47 @@ export class EmployeeService {
     });
 
     return rejected;
+  }
+
+  /**
+   * Permanently delete an employee and their login.
+   *
+   * Everything with a real FK to Employee (attendance, leaves, leave
+   * assignments, payslips, salary payments, experiences) is removed by the
+   * database cascade, and ExamSchedule.invigilatorId is nulled by its SetNull
+   * rule. Three tables reference an employee id WITHOUT a foreign key, so the
+   * database cannot clean them up and they are handled here — otherwise they
+   * would be left pointing at a row that no longer exists.
+   *
+   * This is not recoverable. Use deactivateEmployee to only revoke the login.
+   */
+  async deleteEmployee(schoolId: string, employeeId: string) {
+    const employee = await db.employee.findFirst({
+      where: { id: employeeId, schoolId },
+    });
+
+    if (!employee) {
+      throw new Error('Employee not found');
+    }
+
+    await db.$transaction(async (tx) => {
+      // Loose references (no FK in the schema — Prisma will not cascade these).
+      await tx.employeeSubjectMap.deleteMany({ where: { schoolId, employeeId } });
+      // ClassSubject has no schoolId column; the employee id is a cuid so an
+      // unscoped match cannot reach another school's row.
+      await tx.classSubject.updateMany({ where: { teacherId: employeeId }, data: { teacherId: null } });
+      await tx.classTimetableCell.updateMany({ where: { schoolId, teacherId: employeeId }, data: { teacherId: null } });
+
+      // Scalar back-references to this employee held by other rows.
+      await tx.employee.updateMany({ where: { schoolId, reportingToId: employeeId }, data: { reportingToId: null } });
+      await tx.department.updateMany({ where: { schoolId, headId: employeeId }, data: { headId: null } });
+
+      // The Employee row (plus its cascades), then the login it belongs to.
+      await tx.employee.delete({ where: { id: employeeId } });
+      await tx.user.delete({ where: { id: employee.userId } });
+    });
+
+    return { message: 'Employee deleted' };
   }
 
   /**

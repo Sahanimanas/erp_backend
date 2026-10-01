@@ -4,6 +4,18 @@ import templateService from '../whatsapp/templateService';
 
 const N = (v: any) => Number(v ?? 0);
 
+/**
+ * Synthetic fee-type id for the "brought forward from the previous class" line.
+ * It is not a real ClassFeeType — it exists so the carried amount behaves like
+ * any other ledger row: payments, discounts and extras against it are matched
+ * by feeTypeId in exactly the same way.
+ */
+export const CARRIED_FORWARD_ID = 'CARRIED_FORWARD';
+const CARRIED_FORWARD_NAME = 'Previous Dues (Carried Forward)';
+
+/** Frozen dues brought in from the class the student was promoted out of. */
+interface Carry { amount: number; month: string | null }
+
 // Built-in receipt message used when no PAYMENT_RECEIVED template is set up.
 const DEFAULT_RECEIPT_TEMPLATE = [
   '*{{school}}*',
@@ -36,12 +48,18 @@ export class PaymentsService {
    * payments, produce the per-fee-type items + totals. Shared by the single
    * student ledger and the batched class export so both stay consistent.
    */
-  private computeLedger(structures: any[], payments: any[]) {
+  private computeLedger(structures: any[], payments: any[], carry?: Carry) {
     const sumBy = (feeTypeId: string, kind: string) =>
       payments.filter((p) => p.feeTypeId === feeTypeId && p.kind === kind).reduce((s, p) => s + N(p.amount), 0);
 
     const items = structures.map((s) => {
-      const months = ['Monthly', 'Quarterly'].includes(s.feeType.frequency) ? Math.max(1, s.feeType.months.length) : 1;
+      // `capped` means the month list was narrowed for THIS student (a promotion
+      // start month or a left-date cutoff). An empty list then means genuinely
+      // zero months to bill; the Math.max(1) floor is only for fee types that
+      // were never configured with months at all.
+      const months = ['Monthly', 'Quarterly'].includes(s.feeType.frequency)
+        ? (s.capped ? s.feeType.months.length : Math.max(1, s.feeType.months.length))
+        : 1;
       const base = N(s.amount) * months;
       const extra = sumBy(s.feeTypeId, 'EXTRA');
       const discount = sumBy(s.feeTypeId, 'DISCOUNT');
@@ -60,6 +78,27 @@ export class PaymentsService {
         due: Math.max(0, expected - paid),
       };
     });
+
+    // Amount frozen at the last promotion. A fixed number — never re-priced
+    // against the current class — shown at the top of the ledger.
+    if (carry && carry.amount > 0) {
+      const extra = sumBy(CARRIED_FORWARD_ID, 'EXTRA');
+      const discount = sumBy(CARRIED_FORWARD_ID, 'DISCOUNT');
+      const paid = sumBy(CARRIED_FORWARD_ID, 'PAID');
+      const expected = carry.amount + extra - discount;
+      items.unshift({
+        feeTypeId: CARRIED_FORWARD_ID,
+        name: CARRIED_FORWARD_NAME,
+        frequency: 'One-time',
+        months: carry.month ? [carry.month] : [],
+        perMonth: carry.amount,
+        expected,
+        extra,
+        discount,
+        paid,
+        due: Math.max(0, expected - paid),
+      });
+    }
 
     const totals = items.reduce(
       (t, i) => ({ expected: t.expected + i.expected, paid: t.paid + i.paid, due: t.due + i.due }),
@@ -146,7 +185,7 @@ export class PaymentsService {
 
     const tStruct = await this.transportStructureForStudent(schoolId, student);
     const allStructures = this.capStructuresForStudent(tStruct ? [...structures, tStruct] : structures, student);
-    const { items, totals } = this.computeLedger(allStructures, payments);
+    const { items, totals } = this.computeLedger(allStructures, this.paymentsForStudent(payments, student), this.carryFor(student));
 
     return {
       student: {
@@ -194,16 +233,65 @@ export class PaymentsService {
    * them via a discount. Active students are returned unchanged.
    */
   private capStructuresForStudent(structures: any[], student: any): any[] {
-    const cutoff = student && student.isActive === false ? this.monthIndex(student.billedUntilMonth) : null;
-    if (cutoff == null) return structures;
+    const toIdx = student && student.isActive === false ? this.monthIndex(student.billedUntilMonth) : null;
+    // A mid-session promotion: months before this belonged to the previous
+    // class and were settled into `carriedDue`, so the current class must not
+    // charge for them.
+    const fromIdx = this.monthIndex(student?.feeStartMonth);
+    return this.capMonths(structures, fromIdx, toIdx);
+  }
+
+  /**
+   * Drop payments whose month falls outside a billing window.
+   *
+   * computeLedger matches payments to a fee type by id alone, NOT by month. So
+   * once a promotion moves a student, payments they made for the previous
+   * class's months would still be credited against the new class's rows — while
+   * already being netted off inside `carriedDue`. That is the same money twice.
+   * Payments with no month (Session / One-time) are never month-bound and always
+   * stay.
+   */
+  private paymentsInWindow(payments: any[], fromIdx: number | null, toIdx: number | null): any[] {
+    if (fromIdx == null && toIdx == null) return payments;
+    return payments.filter((p) => {
+      const mi = this.monthIndex(p.month);
+      if (mi == null) return true;
+      if (fromIdx != null && mi < fromIdx) return false;
+      if (toIdx != null && mi > toIdx) return false;
+      return true;
+    });
+  }
+
+  /** The payments that count for a student's CURRENT class. */
+  private paymentsForStudent(payments: any[], student: any): any[] {
+    return this.paymentsInWindow(payments, this.monthIndex(student?.feeStartMonth), null);
+  }
+
+  /** The frozen carry-forward line for a student, if any. */
+  private carryFor(student: any): Carry {
+    return { amount: N(student?.carriedDue), month: student?.feeStartMonth ?? null };
+  }
+
+  /**
+   * Narrow each recurring structure's month list to the window
+   * [fromIdx, toIdx] (either bound optional). Structures that are actually
+   * narrowed are flagged `capped` so the ledger knows an empty month list means
+   * "nothing to bill" rather than "not configured". Session / One-time fees and
+   * unparseable months are left untouched.
+   */
+  private capMonths(structures: any[], fromIdx: number | null, toIdx: number | null): any[] {
+    if (fromIdx == null && toIdx == null) return structures;
     return structures.map((s) => {
       const ft = s.feeType;
       if (!ft || !['Monthly', 'Quarterly'].includes(ft.frequency) || !Array.isArray(ft.months) || !ft.months.length) return s;
       const months = ft.months.filter((m: string) => {
         const mi = this.monthIndex(m);
-        return mi == null ? true : mi <= cutoff;
+        if (mi == null) return true;
+        if (fromIdx != null && mi < fromIdx) return false;
+        if (toIdx != null && mi > toIdx) return false;
+        return true;
       });
-      return { ...s, feeType: { ...ft, months } };
+      return { ...s, capped: true, feeType: { ...ft, months } };
     });
   }
 
@@ -215,7 +303,7 @@ export class PaymentsService {
    * both stay consistent. `admissionDate` is the dueDate fallback for fees with
    * no month (Session / One-time / ad-hoc).
    */
-  private buildInstallmentRows(structures: any[], payments: any[], admissionDate?: Date | null) {
+  private buildInstallmentRows(structures: any[], payments: any[], admissionDate?: Date | null, carry?: Carry) {
     const agg = (feeTypeId: string | null, month: string | null, kind: string, field: 'amount' | 'discount' = 'amount') =>
       payments
         .filter((p) => p.feeTypeId === feeTypeId && (p.month ?? null) === (month ?? null) && p.kind === kind)
@@ -246,9 +334,22 @@ export class PaymentsService {
     // already filtered to enabled rows, so this is the set of "live" fees.
     const enabledFeeTypeIds = new Set((structures as any[]).map((s) => s.feeTypeId));
 
+    // Brought forward from the previous class — one row, not tied to a month.
+    // Stamped with the promotion month so a payment against it is recorded for
+    // that month — which is what keeps an earlier promotion's carried payments
+    // out of a later promotion's window.
+    if (carry && carry.amount > 0) {
+      enabledFeeTypeIds.add(CARRIED_FORWARD_ID);
+      pushRow(CARRIED_FORWARD_ID, CARRIED_FORWARD_NAME, 'One-time', carry.month, carry.amount);
+    }
+
     for (const s of structures as any[]) {
       const ft = s.feeType;
-      const monthLike = ['Monthly', 'Quarterly'].includes(ft.frequency) && ft.months.length;
+      const recurring = ['Monthly', 'Quarterly'].includes(ft.frequency);
+      // Every applicable month fell outside this student's billing window
+      // (promoted in later, or left earlier) — nothing to charge at all.
+      if (recurring && s.capped && !ft.months.length) continue;
+      const monthLike = recurring && ft.months.length;
       const keys = monthLike ? ft.months : [null];
       for (const m of keys) pushRow(s.feeTypeId, ft.name, ft.frequency, m, N(s.amount));
     }
@@ -267,6 +368,51 @@ export class PaymentsService {
   }
 
   /**
+   * What a student still owes for everything BEFORE `beforeMonth`, priced at
+   * the class they are in right now. Called by Promote Student just before the
+   * move, so the figure is frozen at the OLD class's rates and carried into the
+   * new class as a fixed line instead of being re-priced.
+   *
+   * Anything already carried from an earlier promotion is included, so repeated
+   * promotions accumulate rather than losing the older debt. Months from
+   * `beforeMonth` onward are excluded — those are the new class's to charge.
+   */
+  async outstandingBefore(schoolId: string, studentId: string, beforeMonth: string): Promise<number> {
+    const startIdx = this.monthIndex(beforeMonth);
+    if (startIdx == null) throw new Error('Invalid promotion month');
+
+    const student = await this.studentWithClass(schoolId, studentId);
+    const classId = student.sectionId ? student.section?.classId : undefined;
+
+    const [structures, payments] = await Promise.all([
+      this.fetchClassStructures(schoolId, classId),
+      db.feePayment.findMany({ where: { schoolId, studentId } }),
+    ]);
+
+    const tStruct = await this.transportStructureForStudent(schoolId, student);
+    const all = tStruct ? [...structures, tStruct] : structures;
+
+    // Only month-bound fees are carried. A Session / One-time fee has no month,
+    // so "unpaid before June" is meaningless for it — and the new class charges
+    // its own copy of that fee, so freezing it here would bill it twice.
+    const recurring = all.filter((x: any) => ['Monthly', 'Quarterly'].includes(x.feeType?.frequency));
+
+    // Lower bound: where billing in the CURRENT class began (null if the student
+    // has been here all session). Upper bound: the month before the promotion.
+    const fromIdx = this.monthIndex((student as any).feeStartMonth);
+    if (fromIdx != null && fromIdx > startIdx - 1) {
+      throw new Error('Promotion month must be after the previous promotion month');
+    }
+
+    const { totals } = this.computeLedger(
+      this.capMonths(recurring, fromIdx, startIdx - 1),
+      this.paymentsInWindow(payments, fromIdx, startIdx - 1),
+      this.carryFor(student)
+    );
+    return totals.due;
+  }
+
+  /**
    * Per-installment ledger: one row per fee type × applicable month (or "Only
    * Once" for Session/One-time), each with total / paid / discount / due / status.
    * Payments and adjustments are matched by (feeTypeId, month).
@@ -281,7 +427,7 @@ export class PaymentsService {
 
     const tStruct = await this.transportStructureForStudent(schoolId, student);
     const allStructures = this.capStructuresForStudent(tStruct ? [...structures, tStruct] : structures, student);
-    const rows = this.buildInstallmentRows(allStructures, payments, (student as any).admissionDate);
+    const rows = this.buildInstallmentRows(allStructures, this.paymentsForStudent(payments, student), (student as any).admissionDate, this.carryFor(student));
     const totals = rows.reduce(
       (t, r) => ({ total: t.total + r.totalAmount, paid: t.paid + r.paid, discount: t.discount + r.discount, due: t.due + r.due }),
       { total: 0, paid: 0, discount: 0, due: 0 }
@@ -596,7 +742,7 @@ export class PaymentsService {
     const routeMap = await this.routeMapByName(schoolId);
 
     return students.map((s) => {
-      const { items, totals } = this.computeLedger(this.capStructuresForStudent(this.withTransport(structures, routeMap, s), s), byStudent.get(s.id) || []);
+      const { items, totals } = this.computeLedger(this.capStructuresForStudent(this.withTransport(structures, routeMap, s), s), this.paymentsForStudent(byStudent.get(s.id) || [], s), this.carryFor(s));
       return {
         studentId: s.id,
         rollNumber: s.rollNumber,
@@ -647,7 +793,7 @@ export class PaymentsService {
       const structures = await this.fetchClassStructures(schoolId, cls.id, academicYearId);
       let total = 0, collected = 0, pending = 0;
       for (const s of clsStudents) {
-        const { totals } = this.computeLedger(this.capStructuresForStudent(this.withTransport(structures, routeMap, s), s), byStudent.get(s.id) || []);
+        const { totals } = this.computeLedger(this.capStructuresForStudent(this.withTransport(structures, routeMap, s), s), this.paymentsForStudent(byStudent.get(s.id) || [], s), this.carryFor(s));
         total += totals.expected;
         collected += totals.paid;
         pending += totals.due;
@@ -696,7 +842,7 @@ export class PaymentsService {
     return students.map((s) => {
       const pmts = byStudent.get(s.id) || [];
       const allStructures = this.capStructuresForStudent(this.withTransport(structures, routeMap, s), s);
-      const { totals } = this.computeLedger(allStructures, pmts);
+      const { totals } = this.computeLedger(allStructures, this.paymentsForStudent(pmts, s), this.carryFor(s));
 
       // Last payment: latest receipt (grouped by receiptNo) by paid date.
       const recs = new Map<string, { total: number; date: Date }>();
@@ -800,10 +946,13 @@ export class PaymentsService {
     const monthEnd = md ? new Date(md.getFullYear(), md.getMonth() + 1, 0, 23, 59, 59, 999) : null;
 
     return students.map((s) => {
-      const rows = this.buildInstallmentRows(this.capStructuresForStudent(this.withTransport(structures, routeMap, s), s), byStudent.get(s.id) || [], (s as any).admissionDate);
+      const rows = this.buildInstallmentRows(this.capStructuresForStudent(this.withTransport(structures, routeMap, s), s), this.paymentsForStudent(byStudent.get(s.id) || [], s), (s as any).admissionDate, this.carryFor(s));
       let previousDue = 0;
       let currentDue = 0;
-      const lines: { name: string; month: string; amount: number }[] = [];
+      // Fee / discount / paid behind the previous-due figure, so the demand bill
+      // can show the same Fee | Discount | Due | Paid breakdown for that line.
+      const previous = { fee: 0, discount: 0, paid: 0 };
+      const lines: { name: string; month: string; amount: number; fee: number; discount: number; paid: number }[] = [];
 
       for (const r of rows) {
         if (r.due <= 0) continue;
@@ -820,9 +969,12 @@ export class PaymentsService {
         }
         if (bucket === 'current') {
           currentDue += r.due;
-          lines.push({ name: r.name, month: r.monthLabel, amount: r.due });
+          lines.push({ name: r.name, month: r.monthLabel, amount: r.due, fee: r.totalAmount, discount: r.discount, paid: r.paid });
         } else if (bucket === 'previous') {
           previousDue += r.due;
+          previous.fee += r.totalAmount;
+          previous.discount += r.discount;
+          previous.paid += r.paid;
         }
       }
 
@@ -838,6 +990,9 @@ export class PaymentsService {
         phone: s.user?.phone ?? '',
         month: month || '',
         previousDue,
+        previousFee: previous.fee,
+        previousDiscount: previous.discount,
+        previousPaid: previous.paid,
         currentDue,
         totalDue,
         due: totalDue, // back-compat: existing UIs read `due` as the demand total

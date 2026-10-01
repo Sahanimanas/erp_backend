@@ -92,7 +92,7 @@ export class StudentController {
   async promoteStudents(req: Request, res: Response): Promise<void> {
     try {
       const schoolId = req.user!.schoolId;
-      const result = await studentService.promoteStudents(schoolId, req.body);
+      const result = await studentService.promoteStudents(schoolId, req.body, req.user?.userId);
       successResponse(res, 200, result, `Promoted ${result.promoted} student(s)`);
     } catch (error: any) {
       errorResponse(res, 400, error.message || 'Failed to promote students');

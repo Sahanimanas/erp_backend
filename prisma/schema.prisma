@@ -1,5 +1,5 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   // "native" for local/Docker; the rhel target is what Vercel's serverless
   // runtime (AWS Lambda, OpenSSL 3) needs. Keep both so the same client works
   // locally and on Vercel.
@@ -108,10 +108,10 @@ enum GradeType {
 // ─────────────────────────────────────────────────────────────────────────
 
 model School {
-  id                 String                 @id @default(cuid())
-  name               String                 @unique
-  slug               String                 @unique
-  email              String                 @unique
+  id                 String    @id @default(cuid())
+  name               String    @unique
+  slug               String    @unique
+  email              String    @unique
   phone              String?
   address            String?
   city               String?
@@ -127,32 +127,32 @@ model School {
   foundedYear        Int?
   principalName      String?
   principalEmail     String?
-  schoolCode         String?                @unique
-  registrationNumber String?                @unique
-  isActive           Boolean                @default(true)
+  schoolCode         String?   @unique
+  registrationNumber String?   @unique
+  isActive           Boolean   @default(true)
   // Per-tenant feature/module control (toggled by the Super Admin). Empty = all
   // modules enabled. Values mirror the keys in src/common/constants/modules.ts.
-  enabledModules     String[]               @default([])
+  enabledModules     String[]  @default([])
   // Linked WhatsApp number (Baileys). Persisted so the link survives server
   // restarts and page refreshes; cleared only on explicit disconnect.
   whatsappNumber     String?
   whatsappLinkedAt   DateTime?
-  createdAt          DateTime               @default(now())
-  updatedAt          DateTime               @updatedAt
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
   deletedAt          DateTime?
 
-  domains            SchoolDomain[]
-  subscriptions      Subscription[]
-  users              User[]
-  students           Student[]
-  employees          Employee[]
-  classes            Class[]
-  subjects           Subject[]
-  fees               Fee[]
-  attendance         StudentAttendance[]
-  exams              Exam[]
-  auditLogs          AuditLog[]
-  academicYears      AcademicYear[]
+  domains              SchoolDomain[]
+  subscriptions        Subscription[]
+  users                User[]
+  students             Student[]
+  employees            Employee[]
+  classes              Class[]
+  subjects             Subject[]
+  fees                 Fee[]
+  attendance           StudentAttendance[]
+  exams                Exam[]
+  auditLogs            AuditLog[]
+  academicYears        AcademicYear[]
   biometricDevices     BiometricDevice[]
   biometricEnrollments BiometricEnrollment[]
   attendancePunches    AttendancePunch[]
@@ -163,19 +163,19 @@ model School {
 }
 
 model SchoolDomain {
-  id        String   @id @default(cuid())
-  schoolId  String
-  domain    String   @unique
+  id         String    @id @default(cuid())
+  schoolId   String
+  domain     String    @unique
   // "subdomain" (school.myerp.com) or "custom" (school.edu). Drives DNS/SSL flow.
-  type      String   @default("subdomain")
-  isPrimary Boolean  @default(false)
-  isActive  Boolean  @default(true)
+  type       String    @default("subdomain")
+  isPrimary  Boolean   @default(false)
+  isActive   Boolean   @default(true)
   // DNS / SSL provisioning state for custom domains: PENDING | VERIFYING | ACTIVE | FAILED
-  dnsStatus String   @default("PENDING")
-  sslStatus String   @default("PENDING")
+  dnsStatus  String    @default("PENDING")
+  sslStatus  String    @default("PENDING")
   verifiedAt DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
 
@@ -184,19 +184,19 @@ model SchoolDomain {
 }
 
 model SubscriptionPlan {
-  id                String         @id @default(cuid())
-  name              String         @unique
-  description       String?
-  price             Float
-  currency          String         @default("INR")
-  billingCycle      String         @default("monthly")
-  maxUsers          Int
-  maxStudents       Int
-  storageLimit      BigInt
-  featureFlags      String[]       @default([])
-  isActive          Boolean        @default(true)
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
+  id           String   @id @default(cuid())
+  name         String   @unique
+  description  String?
+  price        Float
+  currency     String   @default("INR")
+  billingCycle String   @default("monthly")
+  maxUsers     Int
+  maxStudents  Int
+  storageLimit BigInt
+  featureFlags String[] @default([])
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   subscriptions Subscription[]
 
@@ -204,20 +204,20 @@ model SubscriptionPlan {
 }
 
 model Subscription {
-  id            String               @id @default(cuid())
-  schoolId      String
-  planId        String
-  status        SubscriptionStatus   @default(ACTIVE)
-  startDate     DateTime             @default(now())
-  endDate       DateTime
-  autoRenew     Boolean              @default(true)
+  id              String             @id @default(cuid())
+  schoolId        String
+  planId          String
+  status          SubscriptionStatus @default(ACTIVE)
+  startDate       DateTime           @default(now())
+  endDate         DateTime
+  autoRenew       Boolean            @default(true)
   nextBillingDate DateTime?
-  createdAt     DateTime             @default(now())
-  updatedAt     DateTime             @updatedAt
-  deletedAt     DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  deletedAt       DateTime?
 
-  school School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  plan   SubscriptionPlan   @relation(fields: [planId], references: [id])
+  school School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  plan   SubscriptionPlan @relation(fields: [planId], references: [id])
 
   @@unique([schoolId])
   @@index([schoolId])
@@ -252,7 +252,7 @@ model AuditLog {
 // ─────────────────────────────────────────────────────────────────────────
 
 model User {
-  id                 String     @id @default(cuid())
+  id                 String    @id @default(cuid())
   schoolId           String
   firstName          String
   lastName           String
@@ -263,22 +263,22 @@ model User {
   phone              String?
   password           String
   role               UserRole
-  isActive           Boolean    @default(true)
-  emailVerified      Boolean    @default(false)
-  phoneVerified      Boolean    @default(false)
+  isActive           Boolean   @default(true)
+  emailVerified      Boolean   @default(false)
+  phoneVerified      Boolean   @default(false)
   lastLogin          DateTime?
   lastPasswordChange DateTime?
-  createdAt          DateTime   @default(now())
-  updatedAt          DateTime   @updatedAt
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
   deletedAt          DateTime?
 
-  school         School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  student        Student?
-  employee       Employee?
-  parent         Parent?
-  refreshTokens  RefreshToken[]
-  sessions       UserSession[]
-  auditLogs      AuditLog[]
+  school          School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  student         Student?
+  employee        Employee?
+  parent          Parent?
+  refreshTokens   RefreshToken[]
+  sessions        UserSession[]
+  auditLogs       AuditLog[]
   rolePermissions RolePermission[]
 
   @@unique([email, schoolId])
@@ -289,12 +289,12 @@ model User {
 }
 
 model RefreshToken {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   userId    String
-  token     String   @unique
+  token     String    @unique
   expiresAt DateTime
   revokedAt DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -303,14 +303,14 @@ model RefreshToken {
 }
 
 model UserSession {
-  id        String   @id @default(cuid())
-  userId    String
-  deviceId  String
-  ipAddress String?
-  userAgent String?
+  id           String   @id @default(cuid())
+  userId       String
+  deviceId     String
+  ipAddress    String?
+  userAgent    String?
   lastActivity DateTime @default(now())
-  expiresAt DateTime
-  createdAt DateTime @default(now())
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -367,24 +367,24 @@ model RolePermission {
 // ─────────────────────────────────────────────────────────────────────────
 
 model AcademicYear {
-  id        String   @id @default(cuid())
-  schoolId  String
-  name      String
-  startDate DateTime
-  endDate   DateTime
-  isActive  Boolean  @default(true)
+  id               String   @id @default(cuid())
+  schoolId         String
+  name             String
+  startDate        DateTime
+  endDate          DateTime
+  isActive         Boolean  @default(true)
   // Class Management → Add Session extras
   sessionCode      String?
   timetableSession String? // DEFAULT | ONLINE
   description      String?
-  enabled          Boolean @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  enabled          Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  school  School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  classes Class[]
+  school        School              @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  classes       Class[]
   feeStructures ClassFeeStructure[]
-  exams   Exam[]
+  exams         Exam[]
 
   @@unique([schoolId, name])
   @@index([schoolId])
@@ -392,26 +392,26 @@ model AcademicYear {
 }
 
 model Class {
-  id              String   @id @default(cuid())
-  schoolId        String
-  academicYearId  String
-  name            String
-  description     String?
-  classTeacherId  String?
+  id             String    @id @default(cuid())
+  schoolId       String
+  academicYearId String
+  name           String
+  description    String?
+  classTeacherId String?
   // Class Management → Add Class extras
-  classCode       String?
-  classType       String?  // e.g. Yearly / Semester
-  classSequence   Int?
-  noOfSessions    Int      @default(1)
-  departmentId    String?
-  enabled         Boolean  @default(true)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  deletedAt       DateTime?
+  classCode      String?
+  classType      String? // e.g. Yearly / Semester
+  classSequence  Int?
+  noOfSessions   Int       @default(1)
+  departmentId   String?
+  enabled        Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
 
-  school       School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  academicYear AcademicYear  @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
-  sections     Section[]
+  school        School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  academicYear  AcademicYear   @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  sections      Section[]
   classSubjects ClassSubject[]
   examSchedules ExamSchedule[]
   classDetails  ClassDetail[]
@@ -422,18 +422,18 @@ model Class {
 }
 
 model Section {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   classId   String
   schoolId  String
   name      String
-  strength  Int      @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  strength  Int       @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  class    Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
-  students Student[]
-  timetableSlots TimetableSlot[]
+  class           Class            @relation(fields: [classId], references: [id], onDelete: Cascade)
+  students        Student[]
+  timetableSlots  TimetableSlot[]
   classTimetables ClassTimetable[]
 
   @@unique([classId, name])
@@ -442,21 +442,21 @@ model Section {
 }
 
 model Subject {
-  id        String   @id @default(cuid())
-  schoolId  String
-  name      String
-  code      String
-  description String?
+  id           String    @id @default(cuid())
+  schoolId     String
+  name         String
+  code         String
+  description  String?
   // Class Management → Add Subject extras
-  displayOrder Int     @default(0)
-  totalMarks   Int     @default(100)
-  passingMarks Int     @default(0)
-  enabled      Boolean @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deletedAt DateTime?
+  displayOrder Int       @default(0)
+  totalMarks   Int       @default(100)
+  passingMarks Int       @default(0)
+  enabled      Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
 
-  school        School          @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  school        School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   classSubjects ClassSubject[]
   studentMarks  StudentMark[]
   examSubjects  ExamSubject[]
@@ -487,50 +487,50 @@ model ClassSubject {
 // ─────────────────────────────────────────────────────────────────────────
 
 model Student {
-  id             String   @id @default(cuid())
-  schoolId       String
-  userId         String   @unique
-  rollNumber     String
-  sectionId      String
-  dateOfBirth    DateTime
-  gender         String
-  bloodGroup     String?
-  category       String?
-  caste          String?
-  religion       String?
-  motherTongue   String?
-  aadharNumber   String?   @unique
-  penNumber      String?
-  apaarNo        String?
-  smartCardNo    String?
-  height         String?
-  weight         String?
-  remarks        String?
-  photo          String?
-  admissionDate  DateTime  @default(now())
+  id              String   @id @default(cuid())
+  schoolId        String
+  userId          String   @unique
+  rollNumber      String
+  sectionId       String
+  dateOfBirth     DateTime
+  gender          String
+  bloodGroup      String?
+  category        String?
+  caste           String?
+  religion        String?
+  motherTongue    String?
+  aadharNumber    String?  @unique
+  penNumber       String?
+  apaarNo         String?
+  smartCardNo     String?
+  height          String?
+  weight          String?
+  remarks         String?
+  photo           String?
+  admissionDate   DateTime @default(now())
   admissionNumber String?  @unique
-  registrationNo String?
-  feePlan        String?
+  registrationNo  String?
+  feePlan         String?
   // Academic session the student belongs to, e.g. "2025-2026". Free-text so it
   // works whether or not the school manages sessions under Settings → Sessions.
-  session        String?
+  session         String?
 
   // Prior education history: array of { courseName, passingYear, marksOrGrade, schoolName }
   educationHistory Json?
 
   // Parent / guardian particulars (kept on the student record for quick search
   // & printing; a linked Parent login can still be created separately).
-  fatherName     String?
-  motherName     String?
-  fatherAadhar   String?
-  motherAadhar   String?
-  fatherOccupation String?
-  motherOccupation String?
+  fatherName          String?
+  motherName          String?
+  fatherAadhar        String?
+  motherAadhar        String?
+  fatherOccupation    String?
+  motherOccupation    String?
   fatherQualification String?
   motherQualification String?
-  guardianName   String?
-  guardianPhone  String?
-  guardianEmail  String?
+  guardianName        String?
+  guardianPhone       String?
+  guardianEmail       String?
 
   // Contact
   address          String?
@@ -560,23 +560,33 @@ model Student {
   leftDate         DateTime?
   billedUntilMonth String?
 
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  deletedAt      DateTime?
+  // Mid-session promotion. `feeStartMonth` ("Jun-2026") is the first month the
+  // CURRENT class's recurring fees are billed for — months before it belonged to
+  // the previous class and are not re-priced at the new class's rate.
+  // `carriedDue` is the outstanding amount frozen at that promotion, carried in
+  // as its own ledger line so it can never be recalculated. Null / 0 means the
+  // student has been in this class all session and nothing is carried.
+  feeStartMonth String?
+  carriedDue    BigInt  @default(0)
 
-  school      School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  section     Section          @relation(fields: [sectionId], references: [id], onDelete: Restrict)
-  parents     Parent[]
-  attendance  StudentAttendance[]
-  fees        FeeCollection[]
-  marks       StudentMark[]
-  examSeats      ExamSeat[]
-  examAttendance ExamAttendance[]
-  documents   StudentDocument[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  school               School                  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user                 User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  section              Section                 @relation(fields: [sectionId], references: [id], onDelete: Restrict)
+  parents              Parent[]
+  attendance           StudentAttendance[]
+  fees                 FeeCollection[]
+  marks                StudentMark[]
+  examSeats            ExamSeat[]
+  examAttendance       ExamAttendance[]
+  documents            StudentDocument[]
   biometricEnrollments BiometricEnrollment[]
   attendancePunches    AttendancePunch[]
   transportRoutes      TransportStudentRoute[]
+  promotions           StudentPromotion[]
 
   @@unique([schoolId, rollNumber])
   @@index([schoolId])
@@ -584,18 +594,42 @@ model Student {
   @@index([userId])
 }
 
-model Parent {
-  id            String   @id @default(cuid())
-  schoolId      String
-  userId        String   @unique
-  relationship  String
-  occupation    String?
-  annualIncome  BigInt?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  deletedAt     DateTime?
+// One row per promotion, so a mid-session move is auditable and reversible.
+// The `previous*` columns hold the student's billing state before the move —
+// restoring them undoes the carry-forward exactly.
+model StudentPromotion {
+  id                    String   @id @default(cuid())
+  schoolId              String
+  studentId             String
+  fromSectionId         String?
+  toSectionId           String
+  // First month billed at the NEW class's rate, e.g. "Jun-2026".
+  effectiveMonth        String
+  // Outstanding brought forward from everything before `effectiveMonth`.
+  carriedDue            BigInt   @default(0)
+  previousFeeStartMonth String?
+  previousCarriedDue    BigInt   @default(0)
+  createdBy             String?
+  createdAt             DateTime @default(now())
 
-  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId])
+  @@index([studentId])
+}
+
+model Parent {
+  id           String    @id @default(cuid())
+  schoolId     String
+  userId       String    @unique
+  relationship String
+  occupation   String?
+  annualIncome BigInt?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   students Student[]
 
   @@index([schoolId])
@@ -622,32 +656,32 @@ model StudentDocument {
 // ─────────────────────────────────────────────────────────────────────────
 
 model AdmissionEnquiry {
-  id            String          @id @default(cuid())
-  schoolId      String
+  id                String          @id @default(cuid())
+  schoolId          String
   // Applicant
-  studentName   String
-  gender        String?
-  dateOfBirth   DateTime?
-  classApplying String?
+  studentName       String
+  gender            String?
+  dateOfBirth       DateTime?
+  classApplying     String?
   // Guardian / contact
-  parentName    String?
-  phone         String
-  email         String?
-  address       String?
+  parentName        String?
+  phone             String
+  email             String?
+  address           String?
   // Funnel
-  status        AdmissionStatus @default(ENQUIRY)
-  source        String?         // Walk-in | Online | Referral | Phone
-  reference     String?
-  registrationNo String?        @unique
-  followUpDate  DateTime?
-  notes         String?
-  assignedToId  String?
+  status            AdmissionStatus @default(ENQUIRY)
+  source            String? // Walk-in | Online | Referral | Phone
+  reference         String?
+  registrationNo    String?         @unique
+  followUpDate      DateTime?
+  notes             String?
+  assignedToId      String?
   // Set when the enquiry is converted into a real Student (admission → student
   // bridge). Links the two panels so an admitted applicant becomes a student.
   admittedStudentId String?
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  deletedAt     DateTime?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  deletedAt         DateTime?
 
   @@index([schoolId])
   @@index([status])
@@ -660,45 +694,45 @@ model AdmissionEnquiry {
 // ─────────────────────────────────────────────────────────────────────────
 
 model Employee {
-  id             String   @id @default(cuid())
-  schoolId       String
-  userId         String   @unique
-  employeeCode   String
-  departmentId   String?
-  designationId  String?
-  reportingToId  String?
-  dateOfBirth    DateTime?
-  gender         String?
-  bloodGroup     String?
-  city           String?
-  address        String?
+  id               String    @id @default(cuid())
+  schoolId         String
+  userId           String    @unique
+  employeeCode     String
+  departmentId     String?
+  designationId    String?
+  reportingToId    String?
+  dateOfBirth      DateTime?
+  gender           String?
+  bloodGroup       String?
+  city             String?
+  address          String?
   permanentAddress String?
-  fatherName     String?
-  husbandName    String?
-  qualification  String?
-  rfidNumber     String?
-  aadharNumber   String?  @unique
-  panNumber      String?  @unique
-  dateOfJoining  DateTime @default(now())
-  bankAccount    String?
-  ifscCode       String?
-  baseSalary     BigInt?
-  photo          String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  deletedAt      DateTime?
+  fatherName       String?
+  husbandName      String?
+  qualification    String?
+  rfidNumber       String?
+  aadharNumber     String?   @unique
+  panNumber        String?   @unique
+  dateOfJoining    DateTime  @default(now())
+  bankAccount      String?
+  ifscCode         String?
+  baseSalary       BigInt?
+  photo            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
 
-  school          School              @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  department      Department?         @relation(fields: [departmentId], references: [id])
-  designation     Designation?        @relation(fields: [designationId], references: [id])
-  attendance      EmployeeAttendance[]
-  leaves          Leave[]
+  school           School               @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user             User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department       Department?          @relation(fields: [departmentId], references: [id])
+  designation      Designation?         @relation(fields: [designationId], references: [id])
+  attendance       EmployeeAttendance[]
+  leaves           Leave[]
   leaveAssignments LeaveAssignment[]
-  payslips        Payslip[]
-  salaryPayments  SalaryPayment[]
-  experiences     EmployeeExperience[]
-  invigilations   ExamSchedule[]
+  payslips         Payslip[]
+  salaryPayments   SalaryPayment[]
+  experiences      EmployeeExperience[]
+  invigilations    ExamSchedule[]
 
   @@unique([schoolId, employeeCode])
   @@index([schoolId])
@@ -723,12 +757,12 @@ model EmployeeExperience {
 }
 
 model Department {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   schoolId  String
   name      String
   headId    String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
   employees Employee[]
@@ -739,14 +773,14 @@ model Department {
 }
 
 model Designation {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   schoolId    String
   name        String
-  level       Int      @default(1)
+  level       Int       @default(1)
   description String?
-  permissions String[] @default([])
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  permissions String[]  @default([])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
 
   employees Employee[]
@@ -756,7 +790,7 @@ model Designation {
 }
 
 model LeaveType {
-  id        String   @id @default(cuid())
+  id        String        @id @default(cuid())
   schoolId  String
   name      String
   shortName String
@@ -765,8 +799,8 @@ model LeaveType {
   paid      Boolean       @default(true)
   validity  LeaveValidity @default(YEARLY)
   enabled   Boolean       @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
   deletedAt DateTime?
 
   leaves      Leave[]
@@ -808,27 +842,27 @@ model Holiday {
 }
 
 model Leave {
-  id           String      @id @default(cuid())
-  schoolId     String
-  employeeId   String
-  leaveTypeId  String
-  startDate    DateTime
-  endDate      DateTime
-  days         Int
+  id          String      @id @default(cuid())
+  schoolId    String
+  employeeId  String
+  leaveTypeId String
+  startDate   DateTime
+  endDate     DateTime
+  days        Int
   /// Days actually deducted — `days` minus Sundays and calendar holidays.
-  actualDays   Int?
-  reason       String
-  status       LeaveStatus @default(PENDING)
-  approvedBy   String?
+  actualDays  Int?
+  reason      String
+  status      LeaveStatus @default(PENDING)
+  approvedBy  String?
   /// When the leave was approved / rejected / cancelled.
-  actionDate   DateTime?
-  remarks      String?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  deletedAt    DateTime?
+  actionDate  DateTime?
+  remarks     String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  deletedAt   DateTime?
 
-  employee   Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  leaveType  LeaveType  @relation(fields: [leaveTypeId], references: [id])
+  employee  Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
 
   @@index([schoolId])
   @@index([employeeId])
@@ -836,16 +870,16 @@ model Leave {
 }
 
 model EmployeeAttendance {
-  id        String   @id @default(cuid())
-  schoolId  String
+  id         String           @id @default(cuid())
+  schoolId   String
   employeeId String
-  date      DateTime
-  status    AttendanceStatus @default(PRESENT)
-  inTime    String?
-  outTime   String?
-  remarks   String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  date       DateTime
+  status     AttendanceStatus @default(PRESENT)
+  inTime     String?
+  outTime    String?
+  remarks    String?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
@@ -856,19 +890,19 @@ model EmployeeAttendance {
 }
 
 model Payslip {
-  id        String   @id @default(cuid())
-  schoolId  String
-  employeeId String
-  month     Int
-  year      Int
+  id          String   @id @default(cuid())
+  schoolId    String
+  employeeId  String
+  month       Int
+  year        Int
   basicSalary BigInt
   allowances  BigInt
   deductions  BigInt
-  tax        BigInt
-  netSalary  BigInt
-  status    String   @default("DRAFT")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  tax         BigInt
+  netSalary   BigInt
+  status      String   @default("DRAFT")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
@@ -944,14 +978,14 @@ model SalaryPayment {
 // ─────────────────────────────────────────────────────────────────────────
 
 model StudentAttendance {
-  id        String   @id @default(cuid())
+  id        String           @id @default(cuid())
   schoolId  String
   studentId String
   date      DateTime
   status    AttendanceStatus @default(PRESENT)
   remarks   String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
 
   school  School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
@@ -968,23 +1002,23 @@ model StudentAttendance {
 // punch events to the public ingest endpoint, authenticating with `apiKey`.
 // ─────────────────────────────────────────────────────────────────────────
 model BiometricDevice {
-  id           String            @id @default(cuid())
-  schoolId     String
-  name         String
-  modality     BiometricModality
+  id               String            @id @default(cuid())
+  schoolId         String
+  name             String
+  modality         BiometricModality
   // Serial / device id the hardware reports in its payload (used as a fallback
   // match when the API key is shared or proxied).
-  serialNumber String?
+  serialNumber     String?
   // Secret the device sends (header `x-device-key`) to authenticate ingestion.
-  apiKey       String            @unique
-  ipAddress    String?
-  location     String?
+  apiKey           String            @unique
+  ipAddress        String?
+  location         String?
   // A first IN punch at/after this minute-of-day is marked LATE (default 09:00).
-  lateAfterMinutes Int           @default(540)
-  isActive     Boolean           @default(true)
-  lastSeenAt   DateTime?
-  createdAt    DateTime          @default(now())
-  updatedAt    DateTime          @updatedAt
+  lateAfterMinutes Int               @default(540)
+  isActive         Boolean           @default(true)
+  lastSeenAt       DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
 
   school      School                @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   enrollments BiometricEnrollment[]
@@ -1054,13 +1088,13 @@ model AttendancePunch {
 // ─────────────────────────────────────────────────────────────────────────
 
 model FeeGroup {
-  id        String   @id @default(cuid())
-  schoolId  String
-  name      String
+  id          String    @id @default(cuid())
+  schoolId    String
+  name        String
   description String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deletedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
 
   feeTypes FeeType[]
   fees     Fee[]
@@ -1070,15 +1104,15 @@ model FeeGroup {
 }
 
 model FeeType {
-  id        String   @id @default(cuid())
-  schoolId  String
-  groupId   String
-  name      String
-  amount    BigInt
-  isOptional Boolean @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deletedAt DateTime?
+  id         String    @id @default(cuid())
+  schoolId   String
+  groupId    String
+  name       String
+  amount     BigInt
+  isOptional Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
 
   group FeeGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
 
@@ -1088,18 +1122,18 @@ model FeeType {
 }
 
 model Fee {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   schoolId  String
   sectionId String
   groupId   String
   dueDate   DateTime
-  fine      BigInt   @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  fine      BigInt    @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  school      School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  group       FeeGroup         @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  school      School          @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  group       FeeGroup        @relation(fields: [groupId], references: [id], onDelete: Cascade)
   collections FeeCollection[]
 
   @@index([schoolId])
@@ -1109,17 +1143,17 @@ model Fee {
 }
 
 model FeeCollection {
-  id        String   @id @default(cuid())
+  id        String        @id @default(cuid())
   schoolId  String
   studentId String
   feeId     String
   amount    BigInt
   paidDate  DateTime
   status    PaymentStatus @default(PENDING)
-  receiptNo String?  @unique
+  receiptNo String?       @unique
   remarks   String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
 
   student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
   fee     Fee     @relation(fields: [feeId], references: [id], onDelete: Cascade)
@@ -1136,18 +1170,18 @@ model FeeCollection {
 // ─────────────────────────────────────────────────────────────────────────
 
 model ClassFeeType {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   schoolId    String
   name        String
   // Session | Monthly | One-time — how often the fee recurs.
-  frequency   String   @default("Monthly")
+  frequency   String    @default("Monthly")
   // Applicable months for Monthly frequency (e.g. ["Jun-2025", ...]).
-  months      String[] @default([])
+  months      String[]  @default([])
   incomeHead  String?
-  isTransport Boolean  @default(false)
-  enabled     Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  isTransport Boolean   @default(false)
+  enabled     Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
 
   structures ClassFeeStructure[]
@@ -1158,17 +1192,17 @@ model ClassFeeType {
 }
 
 model ClassFeeStructure {
-  id        String   @id @default(cuid())
-  schoolId  String
-  classId   String
-  feeTypeId String
+  id             String   @id @default(cuid())
+  schoolId       String
+  classId        String
+  feeTypeId      String
   // Academic session (year) this amount applies to. Null = legacy/all-session
   // fallback. Lets the same class carry different fees per session.
   academicYearId String?
-  amount    BigInt   @default(0)
-  enabled   Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  amount         BigInt   @default(0)
+  enabled        Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   feeType      ClassFeeType  @relation(fields: [feeTypeId], references: [id], onDelete: Cascade)
   academicYear AcademicYear? @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
@@ -1183,12 +1217,12 @@ model ClassFeeStructure {
 // Transport module (which sets the operational columns below) — one row per
 // route, so a route created on either screen shows up on the other.
 model TransportRoute {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   schoolId  String
   name      String
-  fee       BigInt   @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  fee       BigInt    @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
   // ── Operational detail (Transport module). All optional so routes created
@@ -1197,11 +1231,11 @@ model TransportRoute {
   routeTo   String?
   vehicleId String?
   driverId  String?
-  staffId   String?            // Employee assigned to accompany the route
-  enabled   Boolean  @default(true)
+  staffId   String? // Employee assigned to accompany the route
+  enabled   Boolean @default(true)
 
-  vehicle   TransportVehicle? @relation(fields: [vehicleId], references: [id])
-  driver    TransportDriver?  @relation(fields: [driverId], references: [id])
+  vehicle   TransportVehicle?        @relation(fields: [vehicleId], references: [id])
+  driver    TransportDriver?         @relation(fields: [driverId], references: [id])
   stoppages TransportRouteStoppage[]
   students  TransportStudentRoute[]
 
@@ -1230,26 +1264,26 @@ model TransportRouteLocation {
 
 // A bus/van in the school fleet.
 model TransportVehicle {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   schoolId      String
   name          String
   vehicleNumber String
   vehicleModel  String?
   gpsDeviceId   String?
-  seatCapacity  Int      @default(0)
-  enabled       Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  seatCapacity  Int       @default(0)
+  enabled       Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
   deletedAt     DateTime?
 
-  routes        TransportRoute[]
+  routes TransportRoute[]
 
   @@unique([schoolId, vehicleNumber])
   @@index([schoolId])
 }
 
 model TransportDriver {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   schoolId  String
   name      String
   licenseNo String
@@ -1257,12 +1291,12 @@ model TransportDriver {
   email     String?
   age       Int?
   address   String?
-  enabled   Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  enabled   Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  routes    TransportRoute[]
+  routes TransportRoute[]
 
   @@index([schoolId])
 }
@@ -1270,14 +1304,14 @@ model TransportDriver {
 // A pickup/drop point. Latitude/longitude are optional — a stop can be recorded
 // by name alone and pinned on the map later.
 model TransportStoppage {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   schoolId  String
   name      String
   latitude  Float?
   longitude Float?
-  enabled   Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  enabled   Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
   routeLinks TransportRouteStoppage[]
@@ -1295,20 +1329,20 @@ enum TransportStopType {
 
 // A stop's place in a route: which stop, at what time, in what order.
 model TransportRouteStoppage {
-  id         String   @id @default(cuid())
+  id         String            @id @default(cuid())
   schoolId   String
   routeId    String
   stoppageId String
-  time       String?              // "07:30" — clock time, not a timestamp
-  sequenceNo Int      @default(0)
+  time       String? // "07:30" — clock time, not a timestamp
+  sequenceNo Int               @default(0)
   stopType   TransportStopType @default(STOPPAGE_POINT)
-  enabled    Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  enabled    Boolean           @default(true)
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
   deletedAt  DateTime?
 
-  route      TransportRoute    @relation(fields: [routeId], references: [id], onDelete: Cascade)
-  stoppage   TransportStoppage @relation(fields: [stoppageId], references: [id], onDelete: Cascade)
+  route    TransportRoute    @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  stoppage TransportStoppage @relation(fields: [stoppageId], references: [id], onDelete: Cascade)
 
   @@unique([routeId, stoppageId])
   @@index([schoolId])
@@ -1319,19 +1353,19 @@ model TransportRouteStoppage {
 // Which student boards which route at which stop. This is the FK-based link
 // that replaces matching Student.transportRoute by name string.
 model TransportStudentRoute {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   schoolId       String
   routeId        String
   stoppageId     String
   studentId      String
   academicYearId String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
   deletedAt      DateTime?
 
-  route          TransportRoute    @relation(fields: [routeId], references: [id], onDelete: Cascade)
-  stoppage       TransportStoppage @relation(fields: [stoppageId], references: [id], onDelete: Cascade)
-  student        Student           @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  route    TransportRoute    @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  stoppage TransportStoppage @relation(fields: [stoppageId], references: [id], onDelete: Cascade)
+  student  Student           @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, academicYearId])
   @@index([schoolId])
@@ -1344,23 +1378,23 @@ model TransportStudentRoute {
 // (expected vs paid vs due) is computed by joining ClassFeeStructure (expected
 // amount for the student's class) against the sum of FeePayment rows.
 model FeePayment {
-  id         String   @id @default(cuid())
-  schoolId   String
-  studentId  String
-  feeTypeId  String?
-  feeTypeName String?            // denormalised label (survives fee-type rename/delete)
-  month      String?            // "Jun-2025" for monthly fees, null otherwise
-  amount     BigInt   @default(0)
-  discount   BigInt   @default(0)
-  fine       BigInt   @default(0)
-  paidDate   DateTime @default(now())
-  receiptNo  String?
-  mode       String   @default("CASH") // CASH | ONLINE | CHEQUE | BANK
+  id          String   @id @default(cuid())
+  schoolId    String
+  studentId   String
+  feeTypeId   String?
+  feeTypeName String? // denormalised label (survives fee-type rename/delete)
+  month       String? // "Jun-2025" for monthly fees, null otherwise
+  amount      BigInt   @default(0)
+  discount    BigInt   @default(0)
+  fine        BigInt   @default(0)
+  paidDate    DateTime @default(now())
+  receiptNo   String?
+  mode        String   @default("CASH") // CASH | ONLINE | CHEQUE | BANK
   // PAID | DISCOUNT (a pure discount line) | EXTRA (an extra charge line)
-  kind       String   @default("PAID")
-  note       String?
-  createdBy  String?
-  createdAt  DateTime @default(now())
+  kind        String   @default("PAID")
+  note        String?
+  createdBy   String?
+  createdAt   DateTime @default(now())
 
   @@index([schoolId])
   @@index([studentId])
@@ -1370,19 +1404,19 @@ model FeePayment {
 }
 
 model LateFeeRule {
-  id                  String   @id @default(cuid())
-  schoolId            String
-  name                String
-  session             String?
-  applicableFeeType   String?  // fee type the rule applies to (name)
-  lateFeeType         String?  // label of the late-fine fee
-  lateFeeAmount       BigInt   @default(0)
-  chargeAfterDueDays  Int      @default(0)
-  startFromCurrentMonth Boolean @default(true)
-  enabled             Boolean  @default(true)
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
-  deletedAt           DateTime?
+  id                    String    @id @default(cuid())
+  schoolId              String
+  name                  String
+  session               String?
+  applicableFeeType     String? // fee type the rule applies to (name)
+  lateFeeType           String? // label of the late-fine fee
+  lateFeeAmount         BigInt    @default(0)
+  chargeAfterDueDays    Int       @default(0)
+  startFromCurrentMonth Boolean   @default(true)
+  enabled               Boolean   @default(true)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  deletedAt             DateTime?
 
   @@index([schoolId])
 }
@@ -1392,24 +1426,24 @@ model LateFeeRule {
 // ─────────────────────────────────────────────────────────────────────────
 
 model Exam {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   schoolId       String
-  academicYearId String?            // session the exam belongs to (null = legacy rows)
+  academicYearId String? // session the exam belongs to (null = legacy rows)
   name           String
   type           ExamType
-  status         String   @default("draft") // draft | published | closed
+  status         String    @default("draft") // draft | published | closed
   startDate      DateTime
   endDate        DateTime
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
   deletedAt      DateTime?
 
   school       School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   academicYear AcademicYear?  @relation(fields: [academicYearId], references: [id], onDelete: SetNull)
-  subjects  ExamSubject[]
-  marks     StudentMark[]
-  schedules ExamSchedule[]
-  seats     ExamSeat[]
+  subjects     ExamSubject[]
+  marks        StudentMark[]
+  schedules    ExamSchedule[]
+  seats        ExamSeat[]
 
   @@unique([schoolId, academicYearId, name])
   @@index([schoolId])
@@ -1453,13 +1487,13 @@ model ExamSchedule {
 }
 
 model ExamHall {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   schoolId  String
   name      String
   roomNo    String?
-  capacity  Int      @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  capacity  Int       @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
   seats ExamSeat[]
@@ -1523,12 +1557,12 @@ model ExamAttendance {
 }
 
 model ExamSubject {
-  id        String   @id @default(cuid())
-  examId    String
-  subjectId String
-  totalMarks Int
+  id           String   @id @default(cuid())
+  examId       String
+  subjectId    String
+  totalMarks   Int
   passingMarks Int
-  createdAt DateTime @default(now())
+  createdAt    DateTime @default(now())
 
   exam    Exam    @relation(fields: [examId], references: [id], onDelete: Cascade)
   subject Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
@@ -1608,7 +1642,7 @@ model ClassTimetable {
   academicYearId String?
   maxPeriods     Int      @default(8)
   completed      Boolean  @default(false)
-  classTeacherId String?  // Employee id
+  classTeacherId String? // Employee id
   periodLabels   String[] @default([]) // editable column headers ("Period 1", "URDU", …)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -1625,12 +1659,12 @@ model ClassTimetableCell {
   id          String   @id @default(cuid())
   schoolId    String
   timetableId String
-  day         String   // Monday … Saturday
-  periodIndex Int      // 0-based column position
+  day         String // Monday … Saturday
+  periodIndex Int // 0-based column position
   startTime   String?
   endTime     String?
   subjectId   String?
-  teacherId   String?  // Employee id (allotment)
+  teacherId   String? // Employee id (allotment)
   onlineLink  String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -1652,7 +1686,7 @@ model ClassDetail {
   id                    String   @id @default(cuid())
   schoolId              String
   classId               String
-  yearIndex             Int      // 1-based "Year N"
+  yearIndex             Int // 1-based "Year N"
   name                  String?
   classCode             String?
   maxInternalExam       Int?
@@ -1694,7 +1728,7 @@ model Syllabus {
   sectionId      String?
   title          String
   content        String   @default("") // rich HTML
-  attachments    Json?    // [{ name, url }]
+  attachments    Json? // [{ name, url }]
   enabled        Boolean  @default(true)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -1760,17 +1794,17 @@ model ReportCardRemark {
 // A generated report card snapshot (aggregated marks + remarks) for a student,
 // stored as JSON so View/Publish/Print render exactly what was generated.
 model GeneratedReportCard {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   schoolId       String
   studentId      String
   sectionId      String?
   academicYearId String?
-  term           String   @default("")
+  term           String    @default("")
   data           Json
-  published      Boolean  @default(false)
+  published      Boolean   @default(false)
   publishedAt    DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@unique([studentId, academicYearId, term])
   @@index([schoolId])
@@ -1863,14 +1897,14 @@ model Notification {
 }
 
 model Message {
-  id        String   @id @default(cuid())
-  schoolId  String
-  senderId  String
+  id          String   @id @default(cuid())
+  schoolId    String
+  senderId    String
   recipientId String
-  subject   String?
-  body      String
-  isRead    Boolean  @default(false)
-  createdAt DateTime @default(now())
+  subject     String?
+  body        String
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
 
   @@index([schoolId])
   @@index([senderId])
@@ -1897,14 +1931,14 @@ model Notice {
 }
 
 model Announcement {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   schoolId  String
   authorId  String
   title     String
   content   String
   imageUrl  String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
   @@index([schoolId])
@@ -1916,17 +1950,17 @@ model Announcement {
 // ─────────────────────────────────────────────────────────────────────────
 
 model File {
-  id        String   @id @default(cuid())
-  schoolId  String
+  id         String    @id @default(cuid())
+  schoolId   String
   uploadedBy String
-  fileName  String
-  fileUrl   String   @unique
-  fileType  String
-  fileSize  BigInt
-  mimeType  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deletedAt DateTime?
+  fileName   String
+  fileUrl    String    @unique
+  fileType   String
+  fileSize   BigInt
+  mimeType   String
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
 
   @@index([schoolId])
   @@index([uploadedBy])

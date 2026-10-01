@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import employeeService from './service';
-import { successResponse, errorResponse, createdResponse, paginatedResponse, deletedResponse } from '@common/utils/response';
+import { successResponse, errorResponse, failResponse, createdResponse, paginatedResponse, deletedResponse } from '@common/utils/response';
 import { DESIGNATION_MODULES } from '@common/constants/designationModules';
 
 export class EmployeeController {
@@ -16,7 +16,7 @@ export class EmployeeController {
       const employee = await employeeService.createEmployee(schoolId, req.body);
       createdResponse(res, employee, 'Employee created successfully');
     } catch (error: any) {
-      errorResponse(res, 400, error.message || 'Failed to create employee');
+      failResponse(res, error, 'Failed to create employee');
     }
   }
 
@@ -32,8 +32,7 @@ export class EmployeeController {
       const employee = await employeeService.updateEmployee(schoolId, employeeId, req.body);
       successResponse(res, 200, employee, 'Employee updated successfully');
     } catch (error: any) {
-      const statusCode = error.message.includes('not found') ? 404 : 400;
-      errorResponse(res, statusCode, error.message || 'Failed to update employee');
+      failResponse(res, error, 'Failed to update employee');
     }
   }
 
@@ -49,8 +48,7 @@ export class EmployeeController {
       const employee = await employeeService.getEmployeeById(schoolId, employeeId);
       successResponse(res, 200, employee);
     } catch (error: any) {
-      const statusCode = error.message.includes('not found') ? 404 : 400;
-      errorResponse(res, statusCode, error.message || 'Failed to fetch employee');
+      failResponse(res, error, 'Failed to fetch employee');
     }
   }
 
@@ -71,7 +69,32 @@ export class EmployeeController {
       const result = await employeeService.listEmployees(schoolId, page, limit, departmentId, search, role, status);
       paginatedResponse(res, result.data, page, limit, result.pagination.total);
     } catch (error: any) {
-      errorResponse(res, 400, error.message || 'Failed to list employees');
+      failResponse(res, error, 'Failed to list employees');
+    }
+  }
+
+  /**
+   * Permanent delete. Refuses to remove the requester's own employee record —
+   * that would delete the login mid-request.
+   */
+  async deleteEmployee(req: Request, res: Response): Promise<void> {
+    try {
+      const schoolId = req.user?.schoolId;
+      const { employeeId } = req.params;
+
+      if (!schoolId || !employeeId) {
+        return void errorResponse(res, 400, 'Required fields missing');
+      }
+
+      const own = await employeeService.getEmployeeById(schoolId, employeeId).catch(() => null);
+      if (own && req.user?.userId && own.userId === req.user.userId) {
+        return void errorResponse(res, 400, 'You cannot delete your own employee record');
+      }
+
+      await employeeService.deleteEmployee(schoolId, employeeId);
+      deletedResponse(res, 'Employee deleted permanently');
+    } catch (error: any) {
+      failResponse(res, error, 'Failed to delete employee');
     }
   }
 
@@ -87,8 +110,7 @@ export class EmployeeController {
       await employeeService.deactivateEmployee(schoolId, employeeId);
       successResponse(res, 200, null, 'Employee deactivated successfully');
     } catch (error: any) {
-      const statusCode = error.message.includes('not found') ? 404 : 400;
-      errorResponse(res, statusCode, error.message || 'Failed to deactivate employee');
+      failResponse(res, error, 'Failed to deactivate employee');
     }
   }
 
@@ -104,8 +126,7 @@ export class EmployeeController {
       await employeeService.activateEmployee(schoolId, employeeId);
       successResponse(res, 200, null, 'Employee activated successfully');
     } catch (error: any) {
-      const statusCode = error.message.includes('not found') ? 404 : 400;
-      errorResponse(res, statusCode, error.message || 'Failed to activate employee');
+      failResponse(res, error, 'Failed to activate employee');
     }
   }
 
@@ -126,7 +147,7 @@ export class EmployeeController {
       const dept = await employeeService.createDepartment(schoolId, req.body);
       createdResponse(res, dept, 'Department created successfully');
     } catch (error: any) {
-      errorResponse(res, 400, error.message || 'Failed to create department');
+      failResponse(res, error, 'Failed to create department');
     }
   }
 
@@ -141,7 +162,7 @@ export class EmployeeController {
       const departments = await employeeService.listDepartments(schoolId);
       successResponse(res, 200, departments);
     } catch (error: any) {
-      errorResponse(res, 400, error.message || 'Failed to list departments');
+      failResponse(res, error, 'Failed to list departments');
     }
   }
 
@@ -157,8 +178,7 @@ export class EmployeeController {
       const dept = await employeeService.getDepartment(schoolId, req.params.id);
       successResponse(res, 200, dept);
     } catch (error: any) {
-      const statusCode = error.message?.includes('not found') ? 404 : 400;
-      errorResponse(res, statusCode, error.message || 'Failed to load department');
+      failResponse(res, error, 'Failed to load department');
     }
   }
 
@@ -174,7 +194,7 @@ export class EmployeeController {
       const designation = await employeeService.createDesignation(schoolId, req.body);
       createdResponse(res, designation, 'Designation created successfully');
     } catch (error: any) {
-      errorResponse(res, 400, error.message || 'Failed to create designation');
+      failResponse(res, error, 'Failed to create designation');
     }
   }
 
@@ -189,7 +209,7 @@ export class EmployeeController {
       const designations = await employeeService.listDesignations(schoolId);
       successResponse(res, 200, designations);
     } catch (error: any) {
-      errorResponse(res, 400, error.message || 'Failed to list designations');
+      failResponse(res, error, 'Failed to list designations');
     }
   }
 
@@ -361,8 +381,7 @@ export class EmployeeController {
       const leave = await employeeService.applyLeave(schoolId, employeeId, req.body);
       createdResponse(res, leave, 'Leave applied successfully');
     } catch (error: any) {
-      const statusCode = error.message.includes('not found') ? 404 : 400;
-      errorResponse(res, statusCode, error.message || 'Failed to apply leave');
+      failResponse(res, error, 'Failed to apply leave');
     }
   }
 
@@ -378,8 +397,7 @@ export class EmployeeController {
       const leaves = await employeeService.getEmployeeLeaves(schoolId, employeeId);
       successResponse(res, 200, leaves);
     } catch (error: any) {
-      const statusCode = error.message.includes('not found') ? 404 : 400;
-      errorResponse(res, statusCode, error.message || 'Failed to fetch leaves');
+      failResponse(res, error, 'Failed to fetch leaves');
     }
   }
 
@@ -396,8 +414,7 @@ export class EmployeeController {
       const leave = await employeeService.approveLeave(schoolId, leaveId, approvedBy);
       successResponse(res, 200, leave, 'Leave approved successfully');
     } catch (error: any) {
-      const statusCode = error.message.includes('not found') ? 404 : 400;
-      errorResponse(res, statusCode, error.message || 'Failed to approve leave');
+      failResponse(res, error, 'Failed to approve leave');
     }
   }
 
@@ -414,8 +431,7 @@ export class EmployeeController {
       const leave = await employeeService.rejectLeave(schoolId, leaveId, remarks);
       successResponse(res, 200, leave, 'Leave rejected successfully');
     } catch (error: any) {
-      const statusCode = error.message.includes('not found') ? 404 : 400;
-      errorResponse(res, statusCode, error.message || 'Failed to reject leave');
+      failResponse(res, error, 'Failed to reject leave');
     }
   }
 }

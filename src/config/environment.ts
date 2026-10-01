@@ -41,7 +41,10 @@ export const config = {
     accessSecret: process.env.JWT_ACCESS_SECRET!,
     refreshSecret: process.env.JWT_REFRESH_SECRET!,
     accessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '15m',
-    refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
+    // Long-lived on purpose: sessions are not auto-terminated, so the refresh
+    // token has to outlive any realistic gap between two visits. A session ends
+    // when the user logs out (which revokes the token), not on a clock.
+    refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '365d',
   },
 
   // Redis

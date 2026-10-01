@@ -15,6 +15,30 @@ import {
   AuthResponse,
   TokenPayload,
 } from './types';
+import { config } from '@config/environment';
+
+/**
+ * expiresAt for a stored refresh token / session row, derived from the same
+ * JWT_REFRESH_EXPIRES_IN the token itself is signed with. Hardcoding 7 days
+ * here let the row claim an expiry the token did not have.
+ */
+function refreshTokenExpiresAt(): Date {
+  const raw = String(config.jwt.refreshExpiresIn ?? '365d').trim();
+  const match = /^(\d+)\s*([smhd])?$/i.exec(raw);
+  const unitMs: Record<string, number> = {
+    s: 1_000,
+    m: 60_000,
+    h: 3_600_000,
+    d: 86_400_000,
+  };
+  // Bare numbers are seconds (jsonwebtoken's own convention); anything
+  // unparseable falls back to a year rather than expiring a session early.
+  const ms = match
+    ? Number(match[1]) * unitMs[(match[2] || 's').toLowerCase()]
+    : 365 * unitMs.d;
+
+  return new Date(Date.now() + ms);
+}
 
 export class AuthService {
   /**
@@ -108,8 +132,7 @@ export class AuthService {
     const refreshToken = generateRefreshToken(user.id);
 
     // Save refresh token
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7); // 7 days
+    const expiresAt = refreshTokenExpiresAt();
 
     await db.refreshToken.create({
       data: {
@@ -121,8 +144,7 @@ export class AuthService {
 
     // Create session if deviceId provided
     if (deviceId) {
-      const expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + 7);
+      const expiresAt = refreshTokenExpiresAt();
 
       await db.userSession.create({
         data: {
@@ -265,8 +287,7 @@ export class AuthService {
     });
 
     // Save new refresh token
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
+    const expiresAt = refreshTokenExpiresAt();
 
     await db.refreshToken.create({
       data: {
@@ -304,7 +325,7 @@ export class AuthService {
   async changePassword(
     userId: string,
     data: ChangePasswordRequest
-  ): Promise<void> {
+  ): Promise<{ email: string | null; role: string }> {
     const { oldPassword, newPassword } = data;
 
     // Validate new password
@@ -322,10 +343,20 @@ export class AuthService {
       throw new Error('User not found');
     }
 
-    // Verify old password
+    // Verify old password.
+    //
+    // The account named in the error is the one the ACCESS TOKEN belongs to —
+    // not necessarily the one the operator has in mind. A Super Admin who opens
+    // Change Password while still in their own session (rather than after
+    // "Login as Admin") is changing THEIR OWN password, and used to see a bare
+    // "Old password is incorrect" with no hint that they were aimed at the wrong
+    // account. Naming it costs nothing: the caller already proved they hold this
+    // account's token.
     const isPasswordValid = await comparePassword(oldPassword, user.password);
     if (!isPasswordValid) {
-      throw new Error('Old password is incorrect');
+      throw new Error(
+        `Old password is incorrect for ${user.email ?? 'this account'}. You are signed in as ${user.email ?? user.id} (${user.role}) — this form only changes THAT account's password.`
+      );
     }
 
     // Hash new password
@@ -350,6 +381,10 @@ export class AuthService {
         revokedAt: new Date(),
       },
     });
+
+    // Hand the caller the account that actually changed, so the UI can say
+    // WHICH login the new password belongs to instead of a bare "success".
+    return { email: user.email, role: user.role };
   }
 
   /**
