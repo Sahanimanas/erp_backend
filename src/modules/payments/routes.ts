@@ -14,6 +14,8 @@ router.get('/fee-details', requireAuth, (req, res) => paymentsController.feeDeta
 // Class-wise fee totals (total / collected / pending per class, session-scoped)
 router.get('/class-summary', requireAuth, (req, res) => paymentsController.classSummary(req, res));
 
+router.get('/collection-report', requireAuth, requireRole(...COLLECTOR), (req, res) => paymentsController.collectionReport(req, res));
+
 // Per-class month-scoped dues (previous vs current month), for Monthly Fee
 // Payment + Demand Receipt. Declared before /:studentId routes.
 router.get('/monthly-dues', requireAuth, (req, res) => paymentsController.monthlyDues(req, res));
@@ -30,6 +32,8 @@ router.post('/bulk-extra', requireAuth, requireRole(...COLLECTOR), (req, res) =>
 
 // Collect a payment
 router.post('/collect', requireAuth, requireRole(...COLLECTOR), (req, res) => paymentsController.collect(req, res));
+// A student self-reports their own UPI payment (creates their own receipt only).
+router.post('/self-report', requireAuth, requireRole('STUDENT'), (req, res) => paymentsController.selfReport(req, res));
 
 // Student ledger + history + installments
 router.get('/students/:studentId/ledger', requireAuth, (req, res) => paymentsController.ledger(req, res));

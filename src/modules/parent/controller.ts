@@ -9,6 +9,15 @@ import {
 } from '@common/utils/response';
 
 export class ParentController {
+  async getMyChildren(req: Request, res: Response): Promise<void> {
+    try {
+      const children = await parentService.getMyChildren(req.user!.schoolId, req.user!.id);
+      successResponse(res, 200, children);
+    } catch (error: any) {
+      errorResponse(res, 400, error.message || 'Failed to load children');
+    }
+  }
+
   async createParent(req: Request, res: Response): Promise<void> {
     try {
       const schoolId = req.user?.schoolId;

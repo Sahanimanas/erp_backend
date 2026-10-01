@@ -19,9 +19,26 @@ export class PaymentsController {
     } catch (e: any) { errorResponse(res, codeFor(e), e.message); }
   }
 
+  /** Student self-reports a UPI payment for their own account. */
+  async selfReport(req: Request, res: Response): Promise<void> {
+    try {
+      const data = await paymentsService.collectSelf(req.user!.schoolId, req.user!.id, req.body);
+      createdResponse(res, data, `Payment recorded (${data.receiptNo})`);
+    } catch (e: any) { errorResponse(res, codeFor(e), e.message); }
+  }
+
   async history(req: Request, res: Response): Promise<void> {
     try {
       const data = await paymentsService.getHistory(req.user!.schoolId, req.params.studentId);
+      successResponse(res, 200, data);
+    } catch (e: any) { errorResponse(res, codeFor(e), e.message); }
+  }
+
+  async collectionReport(req: Request, res: Response): Promise<void> {
+    try {
+      const { from, to } = req.query;
+      if (!from || !to) return void errorResponse(res, 400, 'from and to dates are required');
+      const data = await paymentsService.collectionReport(req.user!.schoolId, new Date(from as string), new Date(to as string));
       successResponse(res, 200, data);
     } catch (e: any) { errorResponse(res, codeFor(e), e.message); }
   }

@@ -39,4 +39,8 @@ router.delete('/student-routes/:id', requireAuth, requireRole(...ADMIN), (req, r
 // Report
 router.get('/student-report', requireAuth, (req, res) => transportController.studentReport(req, res));
 
+// Live GPS tracking — device/driver POSTs location; student/admin GET live snapshot.
+router.get('/routes/:id/live', requireAuth, (req, res) => transportController.getRouteLive(req, res));
+router.post('/routes/:id/location', requireAuth, (req, res) => transportController.updateRouteLocation(req, res));
+
 export default router;

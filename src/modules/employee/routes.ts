@@ -43,6 +43,7 @@ router.get('/me', requireAuth, (req, res) => employeeController.getMyEmployee(re
 router.get('/me/leaves', requireAuth, (req, res) => employeeController.getMyLeaves(req, res));
 router.get('/me/leave-summary', requireAuth, (req, res) => employeeController.getMyLeaveSummary(req, res));
 router.post('/me/leaves', requireAuth, (req, res) => employeeController.applyMyLeave(req, res));
+router.get('/me/salary', requireAuth, (req, res) => employeeController.getMySalary(req, res));
 
 // ── Bulk import ───────────────────────────────────────────────────────────
 router.post('/import', requireAuth, requireRole(...ADMIN), (req, res) => employeeController.importEmployees(req, res));

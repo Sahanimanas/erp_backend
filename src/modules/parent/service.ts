@@ -133,6 +133,35 @@ export class ParentService {
    * Siblings collapse into one guardian: rows are keyed on the mobile number
    * when there is one (digits only), otherwise on the lower-cased name.
    */
+  /**
+   * The logged-in parent's own children — powers the Parent mobile app. Returns
+   * each linked student with the fields needed to view attendance / fees /
+   * results (id, roll, photo, section + class).
+   */
+  async getMyChildren(schoolId: string, userId: string) {
+    const parent = await db.parent.findFirst({ where: { schoolId, userId, deletedAt: null }, select: { id: true } });
+    if (!parent) return [];
+    const students = await db.student.findMany({
+      where: { schoolId, deletedAt: null, parents: { some: { id: parent.id } } },
+      select: {
+        id: true, rollNumber: true, admissionNumber: true, photo: true,
+        user: { select: { firstName: true, lastName: true } },
+        section: { select: { id: true, name: true, class: { select: { id: true, name: true } } } },
+      },
+      orderBy: { rollNumber: 'asc' },
+    });
+    return students.map((s) => ({
+      id: s.id,
+      name: `${s.user?.firstName ?? ''} ${s.user?.lastName ?? ''}`.trim(),
+      rollNumber: s.rollNumber,
+      admissionNumber: s.admissionNumber,
+      photo: s.photo,
+      sectionId: s.section?.id ?? null,
+      sectionName: s.section?.name ?? null,
+      className: s.section?.class?.name ?? null,
+    }));
+  }
+
   async listParents(schoolId: string, page = 1, limit = 10, search?: string) {
     const [parents, students] = await Promise.all([
       db.parent.findMany({

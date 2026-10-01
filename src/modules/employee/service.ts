@@ -701,6 +701,27 @@ export class EmployeeService {
     return employee;
   }
 
+  /** A logged-in employee's own salary structure + payslip/payment history. */
+  async getMySalary(schoolId: string, userId: string) {
+    const employee = await this.getMyEmployee(schoolId, userId);
+    const payments = await db.salaryPayment.findMany({
+      where: { schoolId, employeeId: employee.id, deletedAt: null },
+      orderBy: [{ year: 'desc' }, { paidDate: 'desc' }],
+      take: 24,
+    });
+    let structure: any = null;
+    if ((employee as any).departmentId) {
+      structure = await db.departmentSalary.findUnique({ where: { departmentId: (employee as any).departmentId } });
+    }
+    return {
+      baseSalary: (employee as any).baseSalary ?? structure?.basicSalary ?? null,
+      allowances: structure?.allowances ?? null,
+      deductions: structure?.deductions ?? null,
+      designation: (employee as any).designation?.name ?? null,
+      payments,
+    };
+  }
+
   /** Cancel a leave (the reference UI's "Cancel" beside Approve). */
   async cancelLeave(schoolId: string, leaveId: string, remarks?: string) {
     const leave = await db.leave.findFirst({ where: { id: leaveId, schoolId, deletedAt: null } });

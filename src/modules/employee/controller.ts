@@ -280,6 +280,13 @@ export class EmployeeController {
     } catch (e: any) { errorResponse(res, 404, e.message || 'Failed to load your leaves'); }
   }
 
+  async getMySalary(req: Request, res: Response): Promise<void> {
+    try {
+      const data = await employeeService.getMySalary(req.user!.schoolId, req.user!.id);
+      successResponse(res, 200, data);
+    } catch (e: any) { errorResponse(res, 404, e.message || 'Failed to load your salary'); }
+  }
+
   async getMyLeaveSummary(req: Request, res: Response): Promise<void> {
     try {
       const employee = await employeeService.getMyEmployee(req.user!.schoolId, req.user!.id);

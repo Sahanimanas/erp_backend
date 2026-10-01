@@ -156,6 +156,19 @@ export class TransportController {
       successResponse(res, 200, data);
     } catch (e: any) { errorResponse(res, codeFor(e), msgFor(e)); }
   }
+
+  async getRouteLive(req: Request, res: Response): Promise<void> {
+    try {
+      successResponse(res, 200, await transportService.getRouteLive(req.user!.schoolId, req.params.id));
+    } catch (e: any) { errorResponse(res, codeFor(e), msgFor(e)); }
+  }
+
+  async updateRouteLocation(req: Request, res: Response): Promise<void> {
+    try {
+      const data = await transportService.updateRouteLocation(req.user!.schoolId, req.params.id, req.body);
+      successResponse(res, 200, data, 'Location updated');
+    } catch (e: any) { errorResponse(res, codeFor(e), msgFor(e)); }
+  }
 }
 
 export default new TransportController();

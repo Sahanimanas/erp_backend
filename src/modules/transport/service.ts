@@ -387,6 +387,49 @@ export class TransportService {
     const rows = await this.listStudentRoutes(schoolId, filters.routeId);
     return filters.stoppageId ? rows.filter((r) => r.stoppageId === filters.stoppageId) : rows;
   }
+
+  // ── Live GPS tracking ─────────────────────────────────────────────────────
+  /** A route's live snapshot: bus/driver, ordered stops (with coords) + last GPS. */
+  async getRouteLive(schoolId: string, routeId: string) {
+    const route = await db.transportRoute.findFirst({
+      where: { id: routeId, schoolId, deletedAt: null },
+      include: {
+        vehicle: { select: { id: true, name: true, vehicleNumber: true, gpsDeviceId: true } },
+        driver: { select: { id: true, name: true, phone: true } },
+        stoppages: {
+          orderBy: { sequenceNo: 'asc' },
+          include: { stoppage: { select: { id: true, name: true, latitude: true, longitude: true } } },
+        },
+      },
+    });
+    if (!route) throw new Error('Route not found');
+    const location = await db.transportRouteLocation.findUnique({ where: { routeId } });
+    return {
+      route: {
+        id: route.id, name: route.name, routeFrom: (route as any).routeFrom, routeTo: (route as any).routeTo,
+        vehicle: route.vehicle, driver: route.driver,
+        stops: route.stoppages.map((rs: any) => ({
+          id: rs.stoppage.id, name: rs.stoppage.name,
+          latitude: rs.stoppage.latitude, longitude: rs.stoppage.longitude,
+          time: rs.time, sequenceNo: rs.sequenceNo, stopType: rs.stopType,
+        })),
+      },
+      location: location
+        ? { latitude: location.latitude, longitude: location.longitude, speed: location.speed, heading: location.heading, moving: location.moving, updatedAt: location.updatedAt }
+        : null,
+    };
+  }
+
+  /** Upsert a route's live location — the GPS device / driver posts here. */
+  async updateRouteLocation(schoolId: string, routeId: string, data: any) {
+    const route = await db.transportRoute.findFirst({ where: { id: routeId, schoolId, deletedAt: null } });
+    if (!route) throw new Error('Route not found');
+    const lat = Number(data.latitude), lng = Number(data.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw new Error('latitude and longitude are required');
+    const num = (v: any) => (v === undefined || v === null || v === '' ? null : Number(v));
+    const payload = { latitude: lat, longitude: lng, speed: num(data.speed), heading: num(data.heading), moving: data.moving === undefined ? true : Boolean(data.moving) };
+    return db.transportRouteLocation.upsert({ where: { routeId }, update: payload, create: { schoolId, routeId, ...payload } });
+  }
 }
 
 export default new TransportService();

@@ -373,6 +373,29 @@ export class PaymentsService {
     return { deleted: res.count };
   }
 
+  /**
+   * A logged-in STUDENT records their own UPI payment. Resolves the student from
+   * the user id (so a student can only ever pay for themselves), then delegates
+   * to collect(). Produces a real FeePayment receipt visible in their history.
+   */
+  async collectSelf(
+    schoolId: string,
+    userId: string,
+    payload: { amount?: number; name?: string; note?: string; lines?: any[]; mode?: string }
+  ) {
+    const student = await db.student.findFirst({ where: { userId, schoolId }, select: { id: true } });
+    if (!student) throw new Error('Student record not found for this account');
+    const lines = Array.isArray(payload.lines) && payload.lines.length
+      ? payload.lines
+      : [{ name: payload.name || 'Fees', amount: payload.amount || 0 }];
+    return this.collect(schoolId, {
+      studentId: student.id,
+      lines,
+      mode: payload.mode || 'ONLINE',
+      createdBy: userId,
+    });
+  }
+
   /** Record a payment (one receipt with one or more fee lines). */
   async collect(
     schoolId: string,
@@ -469,6 +492,73 @@ export class PaymentsService {
 
   async getHistory(schoolId: string, studentId: string) {
     return db.feePayment.findMany({ where: { schoolId, studentId }, orderBy: { paidDate: 'desc' } });
+  }
+
+  /**
+   * Collection report over a date range, built from the canonical FeePayment
+   * receipts (kind = PAID). Returns headline totals plus breakdowns by payment
+   * mode, fee type, class and day, and the receipt list (grouped by receiptNo).
+   */
+  async collectionReport(schoolId: string, from: Date, to: Date) {
+    const end = new Date(to); end.setHours(23, 59, 59, 999);
+    const payments = await db.feePayment.findMany({
+      where: { schoolId, kind: 'PAID', paidDate: { gte: from, lte: end } },
+      orderBy: { paidDate: 'desc' },
+    });
+
+    // Enrich with student name + class (no FK relation on FeePayment).
+    const studentIds = [...new Set(payments.map((p) => p.studentId))];
+    const students = studentIds.length
+      ? await db.student.findMany({
+          where: { schoolId, id: { in: studentIds } },
+          select: { id: true, rollNumber: true, user: { select: { firstName: true, lastName: true } }, section: { select: { name: true, class: { select: { name: true } } } } },
+        })
+      : [];
+    const sMap = new Map(students.map((s) => [s.id, s]));
+
+    const add = (map: Map<string, number>, key: string, amt: number) => map.set(key, (map.get(key) || 0) + amt);
+    const byMode = new Map<string, number>();
+    const byFeeType = new Map<string, number>();
+    const byClass = new Map<string, number>();
+    const byDay = new Map<string, number>();
+    const receipts = new Map<string, any>();
+    let totalAmount = 0, totalDiscount = 0;
+
+    for (const p of payments) {
+      const amt = N(p.amount);
+      totalAmount += amt;
+      totalDiscount += N(p.discount);
+      const s = sMap.get(p.studentId);
+      const className = s?.section?.class?.name ? `${s.section.class.name}-${s.section?.name ?? ''}` : 'Unknown';
+      const day = new Date(p.paidDate).toISOString().slice(0, 10);
+      add(byMode, p.mode || 'CASH', amt);
+      add(byFeeType, p.feeTypeName || 'Other', amt);
+      add(byClass, className, amt);
+      add(byDay, day, amt);
+
+      const rkey = p.receiptNo || p.id;
+      const r = receipts.get(rkey) || {
+        receiptNo: p.receiptNo || '—', studentId: p.studentId,
+        studentName: s ? `${s.user?.firstName ?? ''} ${s.user?.lastName ?? ''}`.trim() : 'Student',
+        rollNumber: s?.rollNumber ?? '', className, mode: p.mode || 'CASH',
+        paidDate: p.paidDate, amount: 0, items: [] as { name: string; amount: number }[],
+      };
+      r.amount += amt;
+      r.items.push({ name: p.feeTypeName || 'Fee', amount: amt });
+      receipts.set(rkey, r);
+    }
+
+    const rank = (m: Map<string, number>, keyName: string) =>
+      [...m.entries()].map(([k, amount]) => ({ [keyName]: k, amount })).sort((a, b) => (b.amount as number) - (a.amount as number));
+
+    return {
+      totals: { amount: totalAmount, discount: totalDiscount, receipts: receipts.size, payments: payments.length },
+      byMode: rank(byMode, 'mode'),
+      byFeeType: rank(byFeeType, 'name'),
+      byClass: rank(byClass, 'name'),
+      byDay: [...byDay.entries()].map(([date, amount]) => ({ date, amount })).sort((a, b) => a.date.localeCompare(b.date)),
+      receipts: [...receipts.values()].sort((a, b) => new Date(b.paidDate).getTime() - new Date(a.paidDate).getTime()),
+    };
   }
 
   /** Per-student fee export for a class: one row per student with totals. */

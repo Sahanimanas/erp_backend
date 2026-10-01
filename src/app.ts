@@ -39,6 +39,11 @@ const allowedOrigins = [
   ...(config.frontendUrl || '').split(',').map((s) => s.trim()),
   'http://localhost:5173',
   'http://localhost:5174',
+  // Expo web (mobile app running in Chrome) dev servers
+  'http://localhost:8081',
+  'http://localhost:8082',
+  'http://localhost:8083',
+  'http://10.18.26.128:8083',
 ].filter(Boolean);
 
 // The platform root domain — every tenant subdomain (www, dps, …) is allowed.
@@ -141,11 +146,13 @@ import timetableRoutes from '@modules/timetable/routes';
 import classMgmtRoutes from '@modules/classmgmt/routes';
 import resultMgmtRoutes from '@modules/resultmgmt/routes';
 import notificationRoutes from '@modules/notifications/routes';
+import noticeRoutes from '@modules/notice/routes';
 import admissionRoutes from '@modules/admission/routes';
 import feeMgmtRoutes from '@modules/feemgmt/routes';
 import transportRoutes from '@modules/transport/routes';
 import paymentsRoutes from '@modules/payments/routes';
 import uploadRoutes from '@modules/upload/routes';
+import contentRoutes from '@modules/content/routes';
 import publicRoutes from '@modules/public/routes';
 import whatsappRoutes from '@modules/whatsapp/routes';
 import biometricRoutes from '@modules/biometric/routes';
@@ -189,9 +196,11 @@ app.use(`/api/${config.domain.apiVersion}/timetable`, timetableRoutes);
 app.use(`/api/${config.domain.apiVersion}/class-management`, classMgmtRoutes);
 app.use(`/api/${config.domain.apiVersion}/result-management`, resultMgmtRoutes);
 app.use(`/api/${config.domain.apiVersion}/notifications`, notificationRoutes);
+app.use(`/api/${config.domain.apiVersion}/notices`, noticeRoutes);
 app.use(`/api/${config.domain.apiVersion}/whatsapp`, whatsappRoutes);
 app.use(`/api/${config.domain.apiVersion}/biometric`, biometricRoutes);
 app.use(`/api/${config.domain.apiVersion}/uploads`, uploadRoutes);
+app.use(`/api/${config.domain.apiVersion}/content`, contentRoutes);
 
 // ─────────────────────────────────────────────────────────────────────────
 // ERROR HANDLING

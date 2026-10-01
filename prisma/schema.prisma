@@ -1211,6 +1211,23 @@ model TransportRoute {
   @@index([driverId])
 }
 
+// Live GPS position of a route's bus. Fed by the vehicle's GPS device (or a
+// driver share) and read by the student/admin tracking map. One row per route.
+model TransportRouteLocation {
+  id         String   @id @default(cuid())
+  schoolId   String
+  routeId    String   @unique
+  latitude   Float
+  longitude  Float
+  speed      Float?   // km/h
+  heading    Float?   // degrees 0-360
+  moving     Boolean  @default(true)
+  updatedAt  DateTime @updatedAt
+  createdAt  DateTime @default(now())
+
+  @@index([schoolId])
+}
+
 // A bus/van in the school fleet.
 model TransportVehicle {
   id            String   @id @default(cuid())
@@ -1860,6 +1877,25 @@ model Message {
   @@index([recipientId])
 }
 
+// Two-way notice board: admin ⇄ teacher ⇄ student. `audience` decides who
+// receives it; `senderRole` shows who sent it. `readBy` holds userIds who read it.
+model Notice {
+  id         String   @id @default(cuid())
+  schoolId   String
+  senderId   String
+  senderName String
+  senderRole String   // SCHOOL_ADMIN | PRINCIPAL | TEACHER | STUDENT
+  audience   String   // STUDENTS | TEACHERS | ADMINS | ALL
+  title      String
+  message    String
+  readBy     String[] @default([])
+  createdAt  DateTime @default(now())
+
+  @@index([schoolId])
+  @@index([audience])
+  @@index([senderId])
+}
+
 model Announcement {
   id        String   @id @default(cuid())
   schoolId  String
@@ -1970,4 +2006,36 @@ model Transaction {
   @@index([voucherHeadId])
   @@index([type])
   @@index([date])
+}
+
+// ── Class content: one table for Homework / Diary / Syllabus / Holiday / Events
+// / Online Class / Study Documents. sectionId null = whole-school (holidays, events).
+enum ContentType {
+  HOMEWORK
+  DIARY
+  SYLLABUS
+  HOLIDAY
+  EVENT
+  ONLINE_CLASS
+  STUDY_DOC
+}
+
+model ClassContent {
+  id            String      @id @default(cuid())
+  schoolId      String
+  type          ContentType
+  title         String
+  description   String?
+  subjectName   String?     // denormalised subject label (optional)
+  sectionId     String?     // null = whole school
+  date          DateTime?   // event/holiday/online-class date
+  dueDate       DateTime?   // homework due date
+  link          String?     // online class link / doc / syllabus url
+  createdBy     String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  deletedAt     DateTime?
+
+  @@index([schoolId, type])
+  @@index([sectionId])
 }
