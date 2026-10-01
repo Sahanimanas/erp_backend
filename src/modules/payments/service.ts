@@ -446,6 +446,7 @@ export class PaymentsService {
         registrationNo: (student as any).registrationNo,
         photo: (student as any).photo,
         remarks: (student as any).remarks,
+        isActive: (student as any).isActive !== false,
       },
       rows,
       totals,
@@ -823,7 +824,9 @@ export class PaymentsService {
   async classMonthlyDues(schoolId: string, classId: string, month?: string) {
     const [students, structures] = await Promise.all([
       db.student.findMany({
-        where: { schoolId, deletedAt: null, section: { classId } },
+        // Deactivated (left) students get no demand bill — their remaining
+        // dues stay on their own ledger in Student Fee Payment.
+        where: { schoolId, deletedAt: null, isActive: true, section: { classId } },
         select: {
           id: true, rollNumber: true, registrationNo: true, fatherName: true, admissionDate: true,
           isActive: true, billedUntilMonth: true,
