@@ -1248,16 +1248,16 @@ model TransportRoute {
 // Live GPS position of a route's bus. Fed by the vehicle's GPS device (or a
 // driver share) and read by the student/admin tracking map. One row per route.
 model TransportRouteLocation {
-  id         String   @id @default(cuid())
-  schoolId   String
-  routeId    String   @unique
-  latitude   Float
-  longitude  Float
-  speed      Float?   // km/h
-  heading    Float?   // degrees 0-360
-  moving     Boolean  @default(true)
-  updatedAt  DateTime @updatedAt
-  createdAt  DateTime @default(now())
+  id        String   @id @default(cuid())
+  schoolId  String
+  routeId   String   @unique
+  latitude  Float
+  longitude Float
+  speed     Float? // km/h
+  heading   Float? // degrees 0-360
+  moving    Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
 
   @@index([schoolId])
 }
@@ -1918,8 +1918,8 @@ model Notice {
   schoolId   String
   senderId   String
   senderName String
-  senderRole String   // SCHOOL_ADMIN | PRINCIPAL | TEACHER | STUDENT
-  audience   String   // STUDENTS | TEACHERS | ADMINS | ALL
+  senderRole String // SCHOOL_ADMIN | PRINCIPAL | TEACHER | STUDENT
+  audience   String // STUDENTS | TEACHERS | ADMINS | ALL
   title      String
   message    String
   readBy     String[] @default([])
@@ -2055,21 +2055,133 @@ enum ContentType {
 }
 
 model ClassContent {
-  id            String      @id @default(cuid())
-  schoolId      String
-  type          ContentType
-  title         String
-  description   String?
-  subjectName   String?     // denormalised subject label (optional)
-  sectionId     String?     // null = whole school
-  date          DateTime?   // event/holiday/online-class date
-  dueDate       DateTime?   // homework due date
-  link          String?     // online class link / doc / syllabus url
-  createdBy     String?
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
-  deletedAt     DateTime?
+  id          String      @id @default(cuid())
+  schoolId    String
+  type        ContentType
+  title       String
+  description String?
+  subjectName String? // denormalised subject label (optional)
+  sectionId   String? // null = whole school
+  date        DateTime? // event/holiday/online-class date
+  dueDate     DateTime? // homework due date
+  link        String? // online class link / doc / syllabus url
+  createdBy   String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  deletedAt   DateTime?
 
   @@index([schoolId, type])
   @@index([sectionId])
+}
+
+// ── Platform billing: the ERP vendor's own payment QR, and the payments
+// schools report against it ──────────────────────────────────────────────────
+
+/// The company's single fixed UPI QR, shown to every school. One row, always
+/// id = "singleton" — there is one vendor, so a settings table with many rows
+/// would only invite ambiguity about which QR is live.
+model PlatformQr {
+  id        String   @id @default("singleton")
+  qrImage   String? // public URL from /upload/image
+  upiId     String?
+  payeeName String?
+  note      String? // e.g. "Pay before the 5th and send the UTR"
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@map("platform_qr")
+}
+
+/// A payment a school says it has made to the vendor. Deliberately a *report*,
+/// not a confirmed receipt: nothing here is verified against a bank, so the
+/// status stays REPORTED until someone confirms it out of band. No FK to School
+/// (the same choice FeePayment makes) — the school is resolved on read, so a
+/// school's removal never cascades away its payment history.
+model PlatformPayment {
+  id         String   @id @default(cuid())
+  schoolId   String
+  amount     BigInt   @default(0)
+  reference  String? // UTR / transaction id
+  method     String   @default("UPI") // UPI | BANK | CASH | CHEQUE
+  paidDate   DateTime @default(now())
+  screenshot String? // public URL from /upload/image
+  note       String?
+  status     String   @default("REPORTED") // REPORTED | VERIFIED | REJECTED
+  createdBy  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([schoolId])
+  @@index([paidDate])
+  @@index([status])
+  @@map("platform_payments")
+}
+
+// ── Support: a school raises something, the vendor answers it ────────────────
+
+/// One thread raised by a school. `status` is the vendor's view of the work;
+/// the school only ever sees it, never sets it.
+model SupportTicket {
+  id            String    @id @default(cuid())
+  schoolId      String
+  type          String    @default("ISSUE") // ISSUE | FEEDBACK | QUESTION
+  subject       String
+  message       String
+  status        String    @default("OPEN") // OPEN | IN_PROGRESS | RESOLVED | CLOSED
+  priority      String    @default("NORMAL") // LOW | NORMAL | HIGH
+  // Denormalised so a thread still reads sensibly after the author's account is
+  // removed — a support history that loses its "who" is worth much less.
+  createdBy     String?
+  createdByName String?
+  lastReplyAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  replies SupportReply[]
+
+  @@index([schoolId])
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
+  @@map("support_tickets")
+}
+
+/// A message on a thread. `fromPlatform` tells the two sides apart — it is the
+/// author's SIDE, not their role, because that is what the UI renders and what
+/// decides whose turn it is.
+model SupportReply {
+  id           String   @id @default(cuid())
+  ticketId     String
+  body         String
+  authorId     String?
+  authorName   String?
+  fromPlatform Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+  @@map("support_replies")
+}
+
+/// Per-school configuration that has no column of its own — one row per school
+/// per settings section, holding that section's form as JSON.
+///
+/// Deliberately NOT 60 new columns on School: the settings screen has a dozen
+/// sections whose fields change as the product does, and a schema migration per
+/// checkbox would be absurd. Identity fields that other code queries by (name,
+/// city, phone…) stay real columns on School; this table is for the rest.
+model SchoolSetting {
+  id        String   @id @default(cuid())
+  schoolId  String
+  section   String // "general" | "panel" | "sms" | "email" | ...
+  value     Json     @default("{}")
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([schoolId, section])
+  @@index([schoolId])
+  @@map("school_settings")
 }

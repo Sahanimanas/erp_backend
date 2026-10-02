@@ -64,6 +64,17 @@ export class PaymentsController {
     } catch (e: any) { errorResponse(res, codeFor(e), e.message); }
   }
 
+  async receiptDetail(req: Request, res: Response): Promise<void> {
+    try {
+      const schoolId = req.user?.schoolId;
+      if (!schoolId) return void errorResponse(res, 400, 'School context required');
+      successResponse(res, 200, await paymentsService.receiptDetail(schoolId, req.params.receiptNo, req.query.studentId as string | undefined));
+    } catch (e: any) {
+      const code = /not found/i.test(e.message) ? 404 : 400;
+      errorResponse(res, code, e.message || 'Failed to load the receipt');
+    }
+  }
+
   async revert(req: Request, res: Response): Promise<void> {
     try {
       const data = await paymentsService.revertReceipt(req.user!.schoolId, req.params.receiptNo);

@@ -5,58 +5,137 @@ import { db } from '@common/database/client';
 
 const router = Router();
 
+/** Everything the settings screen reads back about the school itself. */
+const SCHOOL_SELECT = {
+  id: true, name: true, slug: true, email: true, phone: true,
+  address: true, city: true, state: true, pincode: true, country: true,
+  logo: true, watermark: true, upiQr: true, website: true, foundedYear: true,
+  principalName: true, principalEmail: true, schoolCode: true, registrationNumber: true,
+  isActive: true,
+} as const;
+
 /**
- * Get the current user's school (resolved from the JWT school context so it
- * works without a tenant subdomain, e.g. on localhost).
+ * Columns a school admin may edit about their own school. `email` and `slug`
+ * are left out on purpose: they identify the tenant and are what logins and
+ * subdomains resolve against, so changing them belongs to the platform admin,
+ * not to the school.
+ */
+const EDITABLE_TEXT = [
+  'name', 'phone', 'address', 'city', 'state', 'pincode', 'country',
+  'website', 'principalName', 'principalEmail', 'schoolCode', 'registrationNumber',
+  'logo', 'watermark', 'upiQr',
+] as const;
+
+/** Settings sections the screen may read or write. */
+const SECTIONS = [
+  'general', 'panel', 'mobile', 'slider', 'live',
+  'payment', 'sms', 'email', 'accounting', 'whatsapp', 'attendance',
+];
+
+const schoolIdOf = (req: Request) => req.user?.schoolId || req.school?.id;
+
+/**
+ * The current user's school, resolved from the JWT school context so it works
+ * without a tenant subdomain (e.g. on localhost).
  */
 router.get('/', requireAuth, async (req: Request, res: Response) => {
   try {
-    const schoolId = req.user?.schoolId || req.school?.id;
-    if (!schoolId) {
-      return void successResponse(res, 404, null, 'School not found');
-    }
-    const school = await db.school.findUnique({
-      where: { id: schoolId },
-      select: { id: true, name: true, logo: true, watermark: true, upiQr: true, email: true, phone: true, address: true },
-    });
+    const schoolId = schoolIdOf(req);
+    if (!schoolId) return void successResponse(res, 404, null, 'School not found');
+    const school = await db.school.findUnique({ where: { id: schoolId }, select: SCHOOL_SELECT });
     successResponse(res, 200, school);
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    errorResponse(res, 500, error.message || 'Failed to load the school');
   }
 });
 
 /**
- * Update the current user's own school branding (name + logo). School admins /
- * principals only; scoped to their own school via the JWT, not a URL param.
+ * Update the school's own details. Scoped to the caller's school via the JWT,
+ * never a URL param, so one school can never edit another.
  */
 router.put('/', requireAuth, requireRole('SCHOOL_ADMIN', 'PRINCIPAL'), async (req: Request, res: Response) => {
   try {
     const schoolId = req.user?.schoolId;
     if (!schoolId) return void errorResponse(res, 400, 'No school context');
 
-    const { name, logo, watermark, upiQr, address, phone } = req.body ?? {};
+    const body = req.body ?? {};
     const data: any = {};
-    if (name !== undefined) {
-      const trimmed = String(name).trim();
-      if (!trimmed) return void errorResponse(res, 400, 'School name cannot be empty');
-      data.name = trimmed;
+
+    for (const key of EDITABLE_TEXT) {
+      if (body[key] === undefined) continue;
+      const v = body[key] === null ? null : String(body[key]).trim();
+      if (key === 'name' && !v) return void errorResponse(res, 400, 'School name cannot be empty');
+      data[key] = v || null;
     }
-    if (logo !== undefined) data.logo = logo || null;
-    if (watermark !== undefined) data.watermark = watermark || null;
-    if (upiQr !== undefined) data.upiQr = upiQr || null;
-    if (address !== undefined) data.address = String(address).trim() || null;
-    if (phone !== undefined) data.phone = String(phone).trim() || null;
+
+    if (body.foundedYear !== undefined) {
+      if (body.foundedYear === null || body.foundedYear === '') {
+        data.foundedYear = null;
+      } else {
+        const y = Number(body.foundedYear);
+        if (!Number.isInteger(y) || y < 1800 || y > new Date().getFullYear()) {
+          return void errorResponse(res, 400, 'Founded year looks wrong');
+        }
+        data.foundedYear = y;
+      }
+    }
+
     if (!Object.keys(data).length) return void errorResponse(res, 400, 'Nothing to update');
 
-    const updated = await db.school.update({
-      where: { id: schoolId },
-      data,
-      select: { id: true, name: true, logo: true, watermark: true, upiQr: true, address: true, phone: true, email: true },
-    });
-    successResponse(res, 200, updated, 'School updated successfully');
+    const updated = await db.school.update({ where: { id: schoolId }, data, select: SCHOOL_SELECT });
+    successResponse(res, 200, updated, 'School details saved');
   } catch (error: any) {
-    const msg = error?.code === 'P2002' ? 'A school with this name already exists' : (error.message || 'Failed to update school');
+    // name / schoolCode / registrationNumber are unique platform-wide, so a
+    // clash is a real possibility worth naming rather than a generic failure.
+    const msg = error?.code === 'P2002'
+      ? `Another school already uses that ${(error.meta?.target ?? ['value']).join(', ')}`
+      : (error.message || 'Failed to save the school details');
     errorResponse(res, 400, msg);
+  }
+});
+
+/* ── Settings sections ───────────────────────────────────────────────────── */
+
+/**
+ * One section's saved form. Returns {} when it has never been saved, so the
+ * client merges it over its own defaults without branching on null.
+ */
+router.get('/settings/:section', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const schoolId = schoolIdOf(req);
+    if (!schoolId) return void errorResponse(res, 400, 'No school context');
+    const section = String(req.params.section);
+    if (!SECTIONS.includes(section)) return void errorResponse(res, 400, 'Unknown settings section');
+
+    const row = await db.schoolSetting.findUnique({
+      where: { schoolId_section: { schoolId, section } },
+    });
+    successResponse(res, 200, row?.value ?? {});
+  } catch (error: any) {
+    errorResponse(res, 400, error.message || 'Failed to load the settings');
+  }
+});
+
+router.put('/settings/:section', requireAuth, requireRole('SCHOOL_ADMIN', 'PRINCIPAL'), async (req: Request, res: Response) => {
+  try {
+    const schoolId = req.user?.schoolId;
+    if (!schoolId) return void errorResponse(res, 400, 'No school context');
+    const section = String(req.params.section);
+    if (!SECTIONS.includes(section)) return void errorResponse(res, 400, 'Unknown settings section');
+
+    const value = req.body ?? {};
+    if (typeof value !== 'object' || Array.isArray(value)) {
+      return void errorResponse(res, 400, 'Settings must be an object');
+    }
+
+    const row = await db.schoolSetting.upsert({
+      where: { schoolId_section: { schoolId, section } },
+      update: { value, updatedBy: req.user?.id ?? null },
+      create: { schoolId, section, value, updatedBy: req.user?.id ?? null },
+    });
+    successResponse(res, 200, row.value, 'Settings saved');
+  } catch (error: any) {
+    errorResponse(res, 400, error.message || 'Failed to save the settings');
   }
 });
 

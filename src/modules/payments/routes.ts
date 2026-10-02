@@ -43,6 +43,9 @@ router.get('/students/:studentId/installments', requireAuth, (req, res) => payme
 // Per-installment adjustments (discount / extra) + delete + receipt revert
 router.post('/students/:studentId/adjust', requireAuth, requireRole(...COLLECTOR), (req, res) => paymentsController.adjust(req, res));
 router.post('/students/:studentId/delete-installment', requireAuth, requireRole(...COLLECTOR), (req, res) => paymentsController.deleteInstallment(req, res));
+// Everything a printed receipt needs, computed from the same ledger engine the
+// screens use — so a printed sheet can never disagree with what was on screen.
+router.get('/receipts/:receiptNo', requireAuth, (req, res) => paymentsController.receiptDetail(req, res));
 router.post('/receipts/:receiptNo/revert', requireAuth, requireRole(...COLLECTOR), (req, res) => paymentsController.revert(req, res));
 
 // Send a receipt to the student's phone on WhatsApp

@@ -156,6 +156,9 @@ import contentRoutes from '@modules/content/routes';
 import publicRoutes from '@modules/public/routes';
 import whatsappRoutes from '@modules/whatsapp/routes';
 import biometricRoutes from '@modules/biometric/routes';
+import platformBillingRoutes from '@modules/platformbilling/routes';
+import supportRoutes from '@modules/support/routes';
+import platformUsageRoutes from '@modules/platformusage/routes';
 import deviceIngestRoutes from '@modules/biometric/ingest.routes';
 
 // Auth routes (public, no school context needed)
@@ -201,6 +204,9 @@ app.use(`/api/${config.domain.apiVersion}/whatsapp`, whatsappRoutes);
 app.use(`/api/${config.domain.apiVersion}/biometric`, biometricRoutes);
 app.use(`/api/${config.domain.apiVersion}/uploads`, uploadRoutes);
 app.use(`/api/${config.domain.apiVersion}/content`, contentRoutes);
+app.use(`/api/${config.domain.apiVersion}/platform-billing`, platformBillingRoutes);
+app.use(`/api/${config.domain.apiVersion}/support`, supportRoutes);
+app.use(`/api/${config.domain.apiVersion}/platform-usage`, platformUsageRoutes);
 
 // ─────────────────────────────────────────────────────────────────────────
 // ERROR HANDLING

@@ -625,6 +625,138 @@ export class PaymentsService {
    * payment pages). Uses the enabled PAYMENT_RECEIVED templates when present,
    * otherwise a built-in receipt message.
    */
+  /**
+   * Everything a printed fee receipt needs, for ONE receipt number.
+   *
+   * The printed sheet is not a list of this receipt's lines — it is the
+   * student's whole installment schedule, with "Paid" showing what THIS receipt
+   * put against each row. That is what the school's existing paper receipt
+   * does, and it is why the money has to be matched back onto the schedule
+   * rather than simply listed.
+   *
+   * Built on the same buildInstallmentRows() the ledger uses, so a receipt can
+   * never disagree with the screen it was printed from.
+   */
+  async receiptDetail(schoolId: string, receiptNo: string, wantStudentId?: string) {
+    // A receipt number is NOT unique on its own: nextReceiptNo() derives the
+    // number from a row count, so reverting a receipt frees its number for the
+    // next collection. Two students can therefore hold the same number, and
+    // fetching by number alone would print one student's money on another's
+    // receipt. The student is part of the key here for that reason.
+    const all = await db.feePayment.findMany({
+      where: { schoolId, receiptNo, ...(wantStudentId ? { studentId: wantStudentId } : {}) },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!all.length) throw new Error('Receipt not found');
+
+    const studentId = all[0].studentId;
+    // Belt and braces: even without an explicit studentId, never mix two
+    // students onto one sheet.
+    const lines = all.filter((l) => l.studentId === studentId);
+    const student = await this.studentWithClass(schoolId, studentId);
+    const classId = student.section?.classId;
+
+    const [structures, allPayments] = await Promise.all([
+      this.fetchClassStructures(schoolId, classId),
+      db.feePayment.findMany({ where: { schoolId, studentId } }),
+    ]);
+
+    const tStruct = await this.transportStructureForStudent(schoolId, student);
+    const allStructures = this.capStructuresForStudent(tStruct ? [...structures, tStruct] : structures, student);
+    const rows = this.buildInstallmentRows(
+      allStructures,
+      this.paymentsForStudent(allPayments, student),
+      (student as any).admissionDate,
+      this.carryFor(student)
+    );
+
+    // What this one receipt put against each (feeType, month) pair.
+    const paidHere = new Map<string, number>();
+    const paidLines = lines.filter((l) => l.kind === 'PAID');
+    for (const l of paidLines) {
+      const key = `${l.feeTypeId ?? ''}|${l.month ?? ''}`;
+      paidHere.set(key, (paidHere.get(key) ?? 0) + N(l.amount));
+    }
+
+    const scheduleKeys = new Set(rows.map((r: any) => `${r.feeTypeId ?? ''}|${r.month ?? ''}`));
+
+    const items = rows.map((r: any, i: number) => ({
+      sl: i + 1,
+      name: r.month ? `${r.name} - ${r.month}` : r.name,
+      fee: r.totalAmount,
+      discount: r.discount,
+      due: r.due + (paidHere.get(`${r.feeTypeId ?? ''}|${r.month ?? ''}`) ?? 0),
+      paid: paidHere.get(`${r.feeTypeId ?? ''}|${r.month ?? ''}`) ?? 0,
+    }));
+
+    /**
+     * A receipt line can be ad-hoc: collected with a free-text name and no fee
+     * type, so it maps onto no row of the schedule. Those rupees were still
+     * received, so they get their own row — a printed receipt that silently
+     * drops money is worse than one with an extra line.
+     */
+    const unmatched = new Map<string, { name: string; amount: number }>();
+    for (const l of paidLines) {
+      const key = `${l.feeTypeId ?? ''}|${l.month ?? ''}`;
+      if (scheduleKeys.has(key)) continue;
+      const row = unmatched.get(key) ?? { name: l.feeTypeName || 'Other fee', amount: 0 };
+      row.amount += N(l.amount);
+      unmatched.set(key, row);
+    }
+    for (const [, r] of unmatched) {
+      items.push({ sl: items.length + 1, name: r.name, fee: r.amount, discount: 0, due: r.amount, paid: r.amount });
+    }
+
+    const totals = items.reduce(
+      (t, r) => ({
+        fee: t.fee + r.fee,
+        discount: t.discount + r.discount,
+        due: t.due + r.due,
+        paid: t.paid + r.paid,
+      }),
+      { fee: 0, discount: 0, due: 0, paid: 0 }
+    );
+
+    // Dues still standing AFTER this receipt — the "Current Dues" line.
+    const currentDues = rows.reduce((sum: number, r: any) => sum + r.due, 0);
+
+    const school = await db.school.findUnique({
+      where: { id: schoolId },
+      select: {
+        name: true, address: true, phone: true, email: true, logo: true,
+        schoolCode: true, registrationNumber: true,
+      },
+    });
+
+    const first = lines[0];
+    return {
+      school,
+      receiptNo,
+      paymentId: first.id,
+      paidDate: first.paidDate,
+      mode: first.mode,
+      collectedBy: first.createdBy ?? null,
+      note: first.note ?? null,
+      student: {
+        id: student.id,
+        name: `${student.user?.firstName ?? ''} ${student.user?.lastName ?? ''}`.trim(),
+        fatherName: (student as any).fatherName ?? null,
+        className: student.section?.class?.name ?? null,
+        sectionName: student.section?.name ?? null,
+        rollNumber: student.rollNumber,
+        registrationNo: (student as any).registrationNo ?? null,
+        admissionNumber: (student as any).admissionNumber ?? null,
+        session: (student as any).session ?? null,
+      },
+      items,
+      totals,
+      // The money this receipt actually took, straight off its own lines — not
+      // the sum of what happened to match the schedule.
+      receivedAmount: paidLines.reduce((sum, l) => sum + N(l.amount), 0),
+      currentDues,
+    };
+  }
+
   async sendReceiptWhatsApp(schoolId: string, receiptNo: string) {
     const { to, vars } = await this.receiptVars(schoolId, receiptNo);
     if (!to) throw new Error('This student has no phone number on record');
