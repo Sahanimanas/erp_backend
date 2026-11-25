@@ -23,6 +23,14 @@ function normalizeLeaveType(data: LeaveTypeInput, name: string) {
   };
 }
 
+/** Optional monthly salary → BigInt rupees; blank → null, junk → a readable error. */
+function toSalary(v: unknown): bigint | null {
+  if (v === undefined || v === null || (typeof v === 'string' && v.trim() === '')) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) throw new Error('Invalid base salary');
+  return BigInt(Math.trunc(n));
+}
+
 /** Midnight-UTC copy of a date, so day maths never drifts on DST/timezones. */
 function atUtcMidnight(d: Date) {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -113,12 +121,14 @@ export class EmployeeService {
           husbandName: data.husbandName,
           qualification: data.qualification,
           rfidNumber: data.rfidNumber,
-          aadharNumber: data.aadharNumber,
-          panNumber: data.panNumber,
+          // UNIQUE columns: a blank must be stored as NULL, or every second
+          // employee without an Aadhaar/PAN collides on "".
+          aadharNumber: data.aadharNumber?.trim() || null,
+          panNumber: data.panNumber?.trim().toUpperCase() || null,
           dateOfJoining: !isNaN(doj.getTime()) ? doj : new Date(),
-          bankAccount: data.bankAccount,
-          ifscCode: data.ifscCode,
-          baseSalary: data.baseSalary ? BigInt(data.baseSalary) : null,
+          bankAccount: data.bankAccount?.trim() || null,
+          ifscCode: data.ifscCode?.trim().toUpperCase() || null,
+          baseSalary: toSalary(data.baseSalary),
           photo: data.photo,
           ...(experiences.length && {
             experiences: {
@@ -261,6 +271,21 @@ export class EmployeeService {
       updateData.user = { update: userData };
     }
 
+    // Work experience: when the edit form sends the list, it is the complete
+    // new list — replace the old rows in the same write. Omitted = untouched.
+    if (Array.isArray(raw.experiences)) {
+      const rows = raw.experiences.filter((e: any) => e && !blank(e.employer));
+      updateData.experiences = {
+        deleteMany: {},
+        create: rows.map((e: any) => ({
+          schoolId,
+          employer: String(e.employer).trim(),
+          role: blank(e.role) ? null : String(e.role).trim(),
+          totalExperience: blank(e.totalExperience) ? null : String(e.totalExperience).trim(),
+        })),
+      };
+    }
+
     const updated = await db.employee.update({
       where: { id: employeeId },
       data: updateData,
@@ -297,11 +322,14 @@ export class EmployeeService {
             lastName: true,
             email: true,
             phone: true,
+            role: true,
             lastLogin: true,
           },
         },
         department: true,
         designation: true,
+        // The edit form (AddEmployeePage in edit mode) prefills these.
+        experiences: { orderBy: { createdAt: 'asc' } },
         leaves: {
           where: { status: 'PENDING' },
         },
